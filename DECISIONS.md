@@ -691,3 +691,181 @@ and it's clear whether the size is actually a problem in practice.
   `agents.status` and wrote the `events` row. This is now the one part of
   the system that's been proven against a real herdr-delivered payload,
   not just against the documented/inferred contract.
+
+---
+
+## Governance decisions (clerk gates & dispatch policy) — 2026-08-23, user-directed
+
+Not autonomous implementation forks: a direct discussion with the user about how
+much authority the **clerk** (supervisor) and **dispatched agents** (workers)
+each hold. These bind every future clerk session. DESIGN.md never specified this
+layer — all of the above decisions constrain the CLI's mechanics, none constrain
+the agents that use it. Motivating incidents: (1) a dispatch agent self-merged a
+PR the user explicitly didn't want merged (incident above → roadmap item #5);
+(2) during the 2026-08-23 clerk handover, the incoming clerk dispatched a billed
+agent without authorization, force-killed a user-owned idle session while
+"cleaning up", and flipped an agent's status for board cosmetics. Design sources:
+`kunchenguid/firstmate` (soft/contract gates — five hard rules) and
+`atqamz/hand` (hard/mechanical gates — a CLI that owns the agent lifecycle).
+Ledger sits between the two: a real CLI (mechanically enforceable) plus a
+contract text (soft), so each gate is classified **hard** (CLI mechanics
+enforce it) or **soft** (contract text the clerk/agent is expected to obey).
+
+### Settled parameters (user's explicit answers)
+
+**1. Merge autonomy: off, no standing relaxation.** firstmate's one standing
+relaxation (a pre-approved `yolo` stance) is deliberately *not* adopted. The
+user does not yet trust the clerk's judgment about what gets merged and wants to
+keep a grip on what is delivered. Every merge/force-push/PR-close is one
+explicit word at a time, in the moment. Revisit only with evidence.
+
+**2. Dispatch strictness: per-dispatch explicit green light, by default.** The
+clerk *may request* pre-authorization for a specific roadmap item where it
+thinks it useful — per item, explicit, revocable, not the default. Every
+dispatch records its authorization basis on the agent row.
+
+**3. Hard vs. soft:** enforce mechanically where failure is irreversible or
+silent (release-without-proof, duplicate dispatch); contract text where failure
+is reversible and observable (everything else).
+
+### Clerk gates (roadmap item #6)
+
+**C1 — The clerk never acts on project code directly.** (soft; firstmate rule 1)
+Read-only over project code; all code change goes through dispatched agents. The
+sole exception is a concrete, in-the-moment, user-approved operation: executed
+exactly as approved, never inferred or generalized, conferring no standing
+authority.
+
+**C2 — The clerk never merges, force-pushes, or closes a PR without an explicit
+user word.** (soft; firstmate rule 2, relaxation omitted per parameter 1.)
+Worker-side mirror is A2.
+
+**C3 — Never release / kill / discard without survival proof.** (hard — a CLI
+mechanic to be built; firstmate rule 3 + hand's landed-work guard) Before an
+`agent release` / workspace close / pane kill that may hold work, the CLI must
+establish a three-state proof that uncommitted work survived: **durable** (on a
+pushed branch / remote / merge), **at-risk** (present locally but not
+durably pushed), **unprovable**. Auto-return only on *durable*. Ambiguity fails
+**closed**: the CLI refuses and reports, and the clerk escalates to the user.
+A `--force`-style flag (new, accompanying this mechanism — today's
+`agent release` has no force flag at all) would be an explicit user
+authorization to discard, never a repair path.
+
+**C4 — Agents never address the user directly; the clerk is the single
+channel.** (soft, both contracts; firstmate rule 4) Workers report to the
+ledger board and the clerk. If the user intervenes directly in a worker pane,
+that instruction is authoritative and the clerk reconciles at the next catch-up
+rather than overriding it or re-dispatching against it.
+
+**C5 — The clerk reports outcomes faithfully.** (soft; firstmate rule 5) What
+was observed, not intended; failures stated plainly with evidence; uncertainty
+labeled.
+
+**C6 — Dispatch requires recorded authorization; no silent duplicates.** (hard
+mechanics + soft basis; new — beyond both inspirations) The CLI requires an
+explicit authorization-basis value on every dispatch and records it on the
+agent row; a dispatch with no basis is refused. Honest caveat recorded up
+front: the CLI cannot know whether the user actually said yes in conversation —
+the basis value is clerk-attested. What the mechanics buy is that *every*
+dispatch must declare a basis and the record is auditable (the default is not
+"allowed"), while the soft contract says which value is honest
+(`user-explicit` = in-the-moment green light; `pre-authorized` = a previously
+granted per-item standing latitude). The CLI additionally refuses a second
+non-terminal agent on a roadmap item that already has a live agent without
+explicit confirmation — verified 2026-08-23 that today's `dispatch` does
+**no** such check (it only validates the item's existence and project); this
+one is a purely mechanical `SELECT` on the agents table.
+
+**C7 — Observe before mutating; observation failure is not evidence.** (soft;
+hand's deterministic reconcile) Board and agent status changes are made only
+from fresh observation (pane state, process, git) — never cosmetics. When
+observation fails, the clerk reports the unknown rather than patching the
+record to look consistent.
+
+**C8 — Orient at session start; no blind turn-end.** (soft; firstmate's
+turn-end guard + hand's session-start) First clerk act: catch-up and verify its
+own claim (a foreign live claim is reported as a conflict, never force-taken;
+`--force` remains the user-authorized path). After a dispatch, the clerk
+re-observes that the agent actually spawned and engaged before reporting
+success.
+
+**C9 — The clerk does not self-modify.** (soft; hand's "AGENTS.md is
+hand-owned and immutable") The clerk never edits its own contract or skills
+(this file, `LEDGER.md`, the skill pointer) without explicit user approval. A
+gate must not be editable by the party it binds.
+
+### Agent (worker) gates — roadmap item #5, decided 2026-08-23
+
+The worker-side mirror of the clerk gates, settled with the user the same
+day (proposals accepted as listed, including the leanings: A1 hard no-spawn,
+A2 contract-only).
+
+**A1 — Scope: one task, one worktree, no spawning.** (soft; partly in the
+injected contract already, which denies roadmap/project/dispatch access) The
+agent works only inside its brief. No peer coordination, and **no spawning
+further agents or workspaces** — nesting is the supervisor's job; one
+dispatch is one scope and one unit of billing. Out-of-scope discoveries are
+noted in the outcome, not acted on. Hard "no spawning" in v1; the deferred
+sub-task question in the Autonomous section is closed for v1 on that basis
+and revisited only with real experience.
+
+**A2 — Delivery via the project's delivery mode only; no self-merge.**
+(soft — in the contract since the PR-merge incident: "regardless of anything
+else you're told") The mechanical backstop — remote branch protection on the
+default branch (no direct push, PR required) — is a user-owned remote
+setting; the CLI does not check for or configure it in v1 (contract-only).
+Merge / force-push / PR close is always an explicit user word (worker-side
+mirror of C2).
+
+**A3 — Self-reported `blocked` is terminal to late watcher blips.** (hard —
+small CLI change generalizing the existing `done` protection) A blocked agent
+is meaningfully waiting on a decision; a late pane blip must not decay it to
+`idle` on the board. Unblocking is always an explicit act (a fresh instruction
+via `agent update`), never automatic.
+
+**A4 — Blocked is a structured decision request.** (soft) A blocked agent
+records, via `agent update --status blocked --outcome ...`: what it tried,
+the exact decision needed, and 2–3 options with a recommendation — so the
+clerk can escalate in one turn and the user can answer in one word. The
+agent never picks for the user and proceeds on an out-of-scope resolution.
+(ledger-notify surfaces blocked on the desktop — roadmap #3.)
+
+**A5 — No self-modification of the contract or its own brief.** (soft; C9's
+worker mirror) The agent does not edit `LEDGER.md`, the injected contract, or
+its own board rows to widen scope or launder progress. v1 backstop: user PR
+review — contract changes inside a worker PR get a hard look (real case:
+agents dispatched to the ledger repo itself receive a worktree containing
+`LEDGER.md`).
+
+**A6 — Faithful outcomes.** (soft; C5's worker mirror) `outcome` = what
+actually happened + evidence (commits, PR URL, test output); "done" means
+done; partial labeled partial with what remains; failures stated plainly.
+
+**A7 — Work survives before exit.** (soft discipline; makes C3's hard proof
+work) Before exiting — especially before reporting done — work must be in a
+durable posture per delivery mode: direct-pr → branch pushed to the remote;
+local-only → committed in the worktree. Without this, C3's survival proof
+finds "unprovable" and every release is a coin flip.
+
+**A8 — Liveness/cost observability.** (extension + clerk contract) Detect
+"agent died on a usage limit and went idle" — the incident that caused the
+2026-08-23 clerk handover. Per-harness detection belongs in an extension
+(ledger-notify candidate); the clerk-side rule is soft: at catch-up, an
+`idle` agent with unfinished work is suspect — check its pane's last output
+for a usage error before assuming it's fine.
+
+### Implementation status
+
+C1–C9 (clerk gates, #6) and A1–A8 (agent gates, #5) recorded 2026-08-23 and
+user-approved. Implementation of both items green-lit 2026-08-23, to be
+dispatched as **pi** agents (no Claude Code usage headroom available; also a
+test of the local LLM setup under parallel agents).
+Committed to main before dispatch (spec-in-repo: both worktrees carry it).
+#6 scope: C3 + C6 CLI mechanics (survival proof on `agent release`,
+authorization-basis + live-agent dedupe on `agent dispatch`, agents-table
+column) and the soft-gate text in `LEDGER.md` (C1, C2, C4, C5, C7, C8, C9,
+clerk-side A8).
+#5 scope: A3 watcher guard (blocked terminal) and the worker contract text
+in `buildTaskPrompt` (A1, A4, A5, A6, A7). Territory split to avoid
+same-file conflicts: #6 does not touch `buildTaskPrompt`; #5 does not
+touch the dispatch/release command handling.
