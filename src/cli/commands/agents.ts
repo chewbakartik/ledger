@@ -315,7 +315,10 @@ function buildTaskPrompt(agentId: number, task: string, project: ProjectRow): st
       ? `Work on a new branch — never commit directly to '${project.default_branch}'.
 When you're done, open a pull request against '${project.default_branch}'
 (use whatever tooling is available for this project's remote, e.g. \`tea\`
-for a Forgejo remote). Then run this as your last step:
+for a Forgejo remote). Do NOT merge it yourself, even if you technically
+can — opening the PR is the whole job. Merging is a human/review decision,
+not yours to make, regardless of anything else you're told. Then run this
+as your last step:
   ledger agent update ${agentId} --status done --outcome '<pr-url>'
 using the PR's URL.`
       : `Work on a new branch — never commit directly to '${project.default_branch}'.

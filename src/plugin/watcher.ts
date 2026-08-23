@@ -59,7 +59,16 @@ function main(): void {
   // herdr's AgentStatus includes "unknown", which ledger's durable status
   // field does not — an unknown reading is usually transient detection
   // noise, so it's logged above but doesn't overwrite the last known status.
-  if (event.agent_status !== "unknown") {
+  //
+  // `done` is treated as terminal for this row, once the agent has
+  // self-reported it (via `agent update`). Confirmed live (see
+  // DECISIONS.md): herdr keeps reporting pane activity after that —
+  // e.g. the `agent update` command itself finishing causes the pane to
+  // settle back to `idle` a moment later — which would otherwise
+  // silently clobber a just-recorded completion back to `idle`. A
+  // dispatch's own row/pane/tab is never reused for a different task, so
+  // there's no real "back to working" transition this could be losing.
+  if (event.agent_status !== "unknown" && agentRow.status !== "done") {
     db.prepare(
       `UPDATE agents SET status = ?, updated_at = datetime('now') WHERE id = ?`,
     ).run(event.agent_status, agentRow.id);

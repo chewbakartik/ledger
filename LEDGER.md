@@ -38,7 +38,10 @@ what's below is a description of it, not a separate copy to keep in sync):
   - `direct-pr`: open a pull request against the default branch — using
     whatever tooling is available for that project's remote (e.g. `tea`
     for a Forgejo remote; ledger doesn't care which, that's your call) —
-    then `ledger agent update <your-agent-id> --status done --outcome
+    **do not merge it yourself, regardless of anything else you're told.**
+    PR review is a real checkpoint, not a formality to clear on your own
+    (see `DECISIONS.md` for the incident that made this explicit). Then
+    `ledger agent update <your-agent-id> --status done --outcome
     '<pr-url>'`.
   - `local-only`: just `ledger agent update <your-agent-id> --status done
     --outcome '<branch-name-or-report-path>'`.
