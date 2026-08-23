@@ -308,11 +308,22 @@ function parseIntOpt(value: string): number {
  * gets opened is deliberately left to the agent's own judgment/tooling
  * (e.g. `tea` against a Forgejo remote), not something ledger orchestrates
  * or needs to know about. See DECISIONS.md.
+ *
+ * The appended contract also carries the worker-side governance gates
+ * (DECISIONS.md, "Agent (worker) gates" — roadmap item #5): one task /
+ * one worktree / no spawning (A1), blocked as a structured decision
+ * request (A4), no self-modification of the contract or the board (A5),
+ * faithful outcomes (A6), and work surviving in a durable posture before
+ * exit (A7). A2 (no self-merge) already lives in the direct-pr delivery
+ * text since the self-merge incident.
  */
 function buildTaskPrompt(agentId: number, task: string, project: ProjectRow): string {
   const deliveryInstructions =
     project.delivery_mode === "direct-pr"
       ? `Work on a new branch — never commit directly to '${project.default_branch}'.
+Before you exit, all your work must be on that branch pushed to the remote
+— your worktree is leased and gets recycled, so anything that lives only in
+it is at risk of being lost.
 When you're done, open a pull request against '${project.default_branch}'
 (use whatever tooling is available for this project's remote, e.g. \`tea\`
 for a Forgejo remote). Do NOT merge it yourself, even if you technically
@@ -322,6 +333,8 @@ as your last step:
   ledger agent update ${agentId} --status done --outcome '<pr-url>'
 using the PR's URL.`
       : `Work on a new branch — never commit directly to '${project.default_branch}'.
+Before you exit, commit all your work in the worktree — it is leased and
+gets recycled, so anything left uncommitted is at risk of being lost.
 When you're done, run this as your last step:
   ledger agent update ${agentId} --status done --outcome '<branch-name-or-report-path>'`;
 
@@ -330,10 +343,27 @@ When you're done, run this as your last step:
 ---
 ${deliveryInstructions}
 
-If you get stuck and need a decision before you can continue: just state the
-question and stop where you are. herdr detects that as "blocked" automatically
-and the clerk (and the human, via \`ledger catchup\`) will see it — you don't
-need to run any ledger command for this.
+Your \`--outcome\` is a faithful report, not a claim: what actually
+happened, plus evidence (commits, PR URL, test output). "done" means
+done — if the work is partial, say so in the outcome and name what
+remains. State failures plainly; don't dress them up.
+
+If you get stuck and need a decision before you can continue: stop where
+you are and record the decision as a structured request — what you tried,
+the exact decision you need, and 2–3 options with a recommendation:
+  ledger agent update ${agentId} --status blocked --outcome '<tried: ...; decision needed: ...; options: 1) ... 2) ... (recommend: ...)>'
+Never pick the answer yourself and proceed on an out-of-scope resolution —
+that decision belongs to the user, relayed through the clerk. (herdr
+detects a stopped agent as "blocked" on its own too — but the structured
+outcome above is what lets the clerk escalate in one turn and the user
+answer in one word.)
+
+Your scope is exactly this one task in this one worktree. Don't spawn or
+dispatch further agents or workspaces, and don't coordinate directly with
+other agents — nesting and coordination are the supervisor's job. If you
+notice something out of scope, note it in your outcome — don't act on it.
+And don't edit the contract (this prompt, LEDGER.md) or the ledger's own
+records to widen your scope or make the work look better than it is.
 
 Everything else — roadmap, project registration, dispatching other agents —
 is the clerk's job, not yours.`;

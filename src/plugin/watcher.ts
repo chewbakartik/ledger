@@ -60,15 +60,21 @@ function main(): void {
   // field does not — an unknown reading is usually transient detection
   // noise, so it's logged above but doesn't overwrite the last known status.
   //
-  // `done` is treated as terminal for this row, once the agent has
-  // self-reported it (via `agent update`). Confirmed live (see
-  // DECISIONS.md): herdr keeps reporting pane activity after that —
-  // e.g. the `agent update` command itself finishing causes the pane to
-  // settle back to `idle` a moment later — which would otherwise
-  // silently clobber a just-recorded completion back to `idle`. A
-  // dispatch's own row/pane/tab is never reused for a different task, so
-  // there's no real "back to working" transition this could be losing.
-  if (event.agent_status !== "unknown" && agentRow.status !== "done") {
+  // `done` and `blocked` are terminal for this row while the row sits in
+  // them. Confirmed live (see DECISIONS.md): herdr keeps reporting pane
+  // activity after a self-reported `done` — e.g. the `agent update`
+  // command itself finishing causes the pane to settle back to `idle` a
+  // moment later — which would otherwise silently clobber a just-recorded
+  // completion back to `idle`. A self-reported `blocked` needs the same
+  // protection (A3): the agent is meaningfully waiting on a decision, and
+  // a late blip — often the very `agent update` that recorded the block
+  // settling the pane — must not decay it to `idle` on the board. A
+  // dispatch's row/pane/tab is never reused for a different task, so
+  // there's no real "back to working" transition this could be losing:
+  // leaving either state is always an explicit act (a fresh `agent
+  // update`), never a watcher blip.
+  const terminal: AgentStatus[] = ["done", "blocked"];
+  if (event.agent_status !== "unknown" && !terminal.includes(agentRow.status)) {
     db.prepare(
       `UPDATE agents SET status = ?, updated_at = datetime('now') WHERE id = ?`,
     ).run(event.agent_status, agentRow.id);
