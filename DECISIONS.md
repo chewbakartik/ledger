@@ -198,6 +198,47 @@ the full `LEDGER.md` only loads when the skill actually fires (invoked by
 name, or a session's own judgment that it's relevant to what's being
 asked) — not on every unrelated session, which was the whole point.
 
+## `agent release` fix: close the tab, not the whole shared workspace
+
+User asked to release agent #2 (the verification agent from the two-tabs
+proof above). Caught before running it: `agent release` still called
+`herdr.closeWorkspace(row.herdr_workspace)` unconditionally — leftover
+from before workspaces were shared per-project. Releasing agent #2 that
+way would have closed the entire `wE` workspace, taking agent #1's still-
+live tab down with it. Fixed to `herdr.closeTab(row.herdr_tab)` instead,
+same reasoning as the dispatch failure-cleanup path already uses. Verified
+live: released agent #2, confirmed via `herdr workspace get wE` that it
+dropped from `tab_count: 2` to `1`, with agent #1's tab (`wE:t1`) intact
+and workspace `wE` itself still open.
+
+## Verified live: two real agents, same project, one workspace, two tabs
+
+User asked whether the workspace-per-project change had actually been
+proven with two real concurrent agents in the same project — it hadn't;
+the earlier verification simulated the "already has a workspace" state
+rather than using two genuine dispatches, specifically to avoid the cost
+of a second real agent spawn. Asked to prove it for real; did.
+
+`ledger-notify`'s `herdr_workspace` was still NULL going into this (agent
+#1 predates the feature — its workspace `wE` genuinely exists and is
+running, just was never recorded on the project row). Backfilled
+`herdr_workspace = 'wE'` directly via sqlite3 to reflect that reality
+(honest, not a hack: `wE` really is the project's current live workspace)
+so the next dispatch would actually attempt reuse rather than create a
+third workspace. Then dispatched a second real agent (a genuine, useful
+task: review agent #1's work — check out its branch, `npm run build`,
+confirm it compiles).
+
+Confirmed via `herdr workspace get wE`: `tab_count: 2, pane_count: 2`
+— both agents' tabs (`wE:t1` from #1, `wE:t2` from the new #2) in the one
+shared workspace. Bypass mode and trust-dialog dismissal both worked
+correctly on this second real dispatch too. The agent itself, mid-task,
+independently discovered and correctly handled a real edge case this
+setup created (the target branch already checked out in another
+worktree — resolved by checking out the same commit detached instead) —
+incidental but reassuring evidence the underlying git-worktree isolation
+is behaving as intended even under two-agents-one-project conditions.
+
 ## Claude agents dispatch in bypass-permissions mode, not auto
 
 User: dispatched Claude agents should run in `bypass` permission mode, not

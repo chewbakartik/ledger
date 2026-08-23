@@ -251,8 +251,8 @@ export function registerAgentCommands(program: Command): void {
     .command("release <id>")
     .description(
       "return the agent's leased worktree to the treehouse pool and close its " +
-        "herdr workspace. Does not change agents.status — do that separately " +
-        "with 'agent update' if appropriate.",
+        "herdr tab. Does not change agents.status — do that separately with " +
+        "'agent update' if appropriate.",
     )
     .action((id: string) => {
       const db = getDb();
@@ -260,10 +260,13 @@ export function registerAgentCommands(program: Command): void {
 
       returnWorktree(row.worktree_path);
       try {
-        herdr.closeWorkspace(row.herdr_workspace);
+        // Close just this agent's own tab, never the whole workspace —
+        // other agents working the same project may have live tabs in it
+        // (see "one herdr workspace per project" in DECISIONS.md).
+        herdr.closeTab(row.herdr_tab);
       } catch {
-        // Workspace may already be closed (e.g. user closed the pane
-        // manually) — releasing the worktree lease is what matters.
+        // Tab may already be closed (e.g. user closed the pane manually)
+        // — releasing the worktree lease is what matters.
       }
 
       db.prepare(
