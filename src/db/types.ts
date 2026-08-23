@@ -7,6 +7,18 @@ export type RoadmapStatus =
   | "done"
   | "dropped";
 
+// Coarse triage rank for the not-done queue (DECISIONS.md, 2026-08-23,
+// user-directed): an *order*, not readiness — readiness stays with
+// status = 'blocked' + description. A stale value only mis-sorts the
+// queue (visible at catch-up); it never silently blocks ready work.
+export type RoadmapPriority = "high" | "normal" | "low";
+
+export const ROADMAP_PRIORITIES: RoadmapPriority[] = [
+  "high",
+  "normal",
+  "low",
+];
+
 export type AgentStatus = "blocked" | "working" | "done" | "idle";
 
 // Clerk gate C6 (DECISIONS.md): how a dispatch was authorized.
@@ -69,6 +81,7 @@ export interface RoadmapRow {
   title: string;
   description: string | null;
   status: RoadmapStatus;
+  priority: RoadmapPriority;
   created_at: string;
   updated_at: string;
 }

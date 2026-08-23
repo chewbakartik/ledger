@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { getDb } from "../../db/client.js";
-import type { RoadmapRow, RoadmapStatus } from "../../db/types.js";
+import type { RoadmapPriority, RoadmapRow, RoadmapStatus } from "../../db/types.js";
+import { ROADMAP_PRIORITIES } from "../../db/types.js";
 import { printJson, printTable } from "../format.js";
 import { getProjectByName } from "./projects.js";
 
@@ -24,15 +25,27 @@ export function registerRoadmapCommands(program: Command): void {
     .requiredOption("--title <title>", "item title")
     .option("--description <text>", "longer description")
     .option("--parent <id>", "parent roadmap item id, for a sub-item", parseIntOpt)
+    .option(
+      "--priority <priority>",
+      `item priority (${ROADMAP_PRIORITIES.join("|")}, default normal)`,
+    )
     .action(
       (opts: {
         project: string;
         title: string;
         description?: string;
         parent?: number;
+        priority?: string;
       }) => {
         const project = getProjectByName(opts.project);
         const db = getDb();
+        // Note: assertValidPriority() is an assertion function (returns
+        // void) — it validates/narrows, it must not be used as the value.
+        let priority: RoadmapPriority = "normal";
+        if (opts.priority !== undefined) {
+          assertValidPriority(opts.priority);
+          priority = opts.priority;
+        }
 
         if (opts.parent !== undefined) {
           const parent = db
@@ -48,8 +61,8 @@ export function registerRoadmapCommands(program: Command): void {
 
         const row = db
           .prepare(
-            `INSERT INTO roadmap (project_id, parent_id, title, description)
-             VALUES (?, ?, ?, ?)
+            `INSERT INTO roadmap (project_id, parent_id, title, description, priority)
+             VALUES (?, ?, ?, ?, ?)
              RETURNING *`,
           )
           .get(
@@ -57,6 +70,7 @@ export function registerRoadmapCommands(program: Command): void {
             opts.parent ?? null,
             opts.title,
             opts.description ?? null,
+            priority,
           ) as RoadmapRow;
 
         printJson(row);
@@ -95,13 +109,15 @@ export function registerRoadmapCommands(program: Command): void {
 
   roadmap
     .command("update <id>")
-    .description("update a roadmap item's status/title/description")
+    .description("update a roadmap item's status/title/description/priority")
     .option("--status <status>", `new status (${VALID_STATUSES.join("|")})`)
     .option("--title <title>", "new title")
     .option("--description <text>", "new description")
+    .option("--priority <priority>", `new priority (${ROADMAP_PRIORITIES.join("|")})`)
     .action(
-      (id: string, opts: { status?: string; title?: string; description?: string }) => {
+      (id: string, opts: { status?: string; title?: string; description?: string; priority?: string }) => {
         if (opts.status) assertValidStatus(opts.status);
+        if (opts.priority) assertValidPriority(opts.priority);
         const db = getDb();
         const existing = db
           .prepare("SELECT * FROM roadmap WHERE id = ?")
@@ -111,7 +127,7 @@ export function registerRoadmapCommands(program: Command): void {
         const row = db
           .prepare(
             `UPDATE roadmap
-             SET status = ?, title = ?, description = ?, updated_at = datetime('now')
+             SET status = ?, title = ?, description = ?, priority = ?, updated_at = datetime('now')
              WHERE id = ?
              RETURNING *`,
           )
@@ -119,6 +135,7 @@ export function registerRoadmapCommands(program: Command): void {
             opts.status ?? existing.status,
             opts.title ?? existing.title,
             opts.description ?? existing.description,
+            opts.priority ?? existing.priority,
             Number(id),
           ) as RoadmapRow;
 
@@ -130,6 +147,12 @@ export function registerRoadmapCommands(program: Command): void {
 function assertValidStatus(status: string): asserts status is RoadmapStatus {
   if (!VALID_STATUSES.includes(status as RoadmapStatus)) {
     throw new Error(`--status must be one of: ${VALID_STATUSES.join(", ")}`);
+  }
+}
+
+function assertValidPriority(priority: string): asserts priority is RoadmapPriority {
+  if (!ROADMAP_PRIORITIES.includes(priority as RoadmapPriority)) {
+    throw new Error(`--priority must be one of: ${ROADMAP_PRIORITIES.join(", ")}`);
   }
 }
 

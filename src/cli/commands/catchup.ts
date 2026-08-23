@@ -53,7 +53,11 @@ export function registerCatchupCommand(program: Command): void {
         roadmapSql += " AND project_id = ?";
         roadmapParams.push(project.id);
       }
-      roadmapSql += " ORDER BY project_id, parent_id IS NOT NULL, id";
+      // Coarse triage order (DECISIONS.md, 2026-08-23): priority
+      // high -> normal -> low, ties by id. Stale priorities mis-sort
+      // this list (visible here) without blocking anything.
+      roadmapSql +=
+        " ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, id";
       const roadmap = db.prepare(roadmapSql).all(...roadmapParams) as RoadmapRow[];
 
       if (firstClerk) {

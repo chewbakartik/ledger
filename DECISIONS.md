@@ -869,3 +869,40 @@ clerk-side A8).
 in `buildTaskPrompt` (A1, A4, A5, A6, A7). Territory split to avoid
 same-file conflicts: #6 does not touch `buildTaskPrompt`; #5 does not
 touch the dispatch/release command handling.
+
+---
+
+## Roadmap item priority: a coarse enum, not a rank or dependency edges — 2026-08-23, user-directed
+
+Roadmap items gain a `priority` column (`high | normal | low`, default
+`normal`; migration `0004`, `TEXT NOT NULL DEFAULT 'normal'` + CHECK
+constraint) so the not-done queue has a coarse triage order. `ledger
+roadmap add` / `update` take `--priority`; `ledger catchup` orders its
+not-done/not-dropped list by priority high → normal → low, ties by id.
+
+**The decision: coarse enum, not integer rank, not dependency edges.**
+User-directed (2026-08-23 session). The alternatives were
+rejected on *staleness*, not on expressiveness:
+
+- **Not integer rank/order values, because they rot.** A rank is only
+  meaningful relative to the other rows: inserting a new item between
+  two ranked items renumbers the queue, completing an item leaves gaps
+  or stale gaps, and every add/complete becomes a write storm over the
+  table to keep numbers that mean nothing but "lower is earlier" from
+  lying. A coarse enum has three stable values that don't rot — adding
+  or completing items changes nothing about the others.
+- **Not dependency edges, because readiness already has a home and
+  stale edges fail badly.** Readiness is already carried by
+  `status = 'blocked'` plus the `description` (what the block is on);
+  v1 has no auto-unblock, so an edge table would be dead weight until
+  that separate future feature ever lands. The failure-mode argument is
+  the decisive one: a stale priority value *degrades gracefully* — it
+  mis-sorts the queue, which is immediately visible at catch-up (the
+  ordering is right there in the output); a stale dependency edge
+  *silently blocks ready work* — the queue just looks short of ready
+  items and nothing flags why. Visible mis-sort beats silent
+  starvation.
+
+Consequences: priority is order, never readiness — the CLI does not
+auto-unblock or otherwise act on it; and a wrong/stale value is a
+cosmetic bug with an obvious symptom, by design.

@@ -133,7 +133,8 @@ ledger catchup [--project <name>] [--json]
 
 Returns, in one call: agents currently `blocked` (need a decision now),
 every `events` row since the last time any clerk ran `catchup` (tracked in
-`first_clerk.last_seen`), and every roadmap item not yet `done`/`dropped`.
+`first_clerk.last_seen`), and every roadmap item not yet `done`/`dropped`,
+ordered by priority `high → normal → low` (ties by id).
 This is the entire "what's going on" operation from `DESIGN.md` — read this
 instead of any prose file, every session.
 
@@ -195,13 +196,22 @@ Other project commands: `ledger project list [--json]`, `ledger project get <nam
 ### Roadmap: turning asks into briefs
 
 ```sh
-ledger roadmap add --project <name> --title <title> [--parent <id>] [--description <text>]
+ledger roadmap add --project <name> --title <title> [--parent <id>] [--description <text>] [--priority <high|normal|low>]
 ledger roadmap list --project <name> [--status <status>] [--all] [--json]
-ledger roadmap update <id> [--status <status>] [--title <title>] [--description <text>]
+ledger roadmap update <id> [--status <status>] [--title <title>] [--description <text>] [--priority <high|normal|low>]
 ```
 
 Statuses: `planned | in_progress | blocked | done | dropped`. `--parent`
 nests a sub-item under an existing roadmap item (arbitrary depth).
+
+Priority: `high | normal | low`, default `normal` (also a column on every
+row: JSON output and `list`'s table both show it). It is a coarse triage
+rank for ordering the not-done queue — *order*, not readiness: readiness
+stays with `status = blocked` + `description` (auto-unblock is a separate
+future feature, not implied by priority). A stale priority degrades
+gracefully: it mis-sorts the catch-up list, which is visible there; it
+cannot silently block ready work the way a stale dependency edge could
+(DECISIONS.md, 2026-08-23).
 
 This is where "what the human asked for" becomes "briefs an agent can
 actually execute without holding the whole feature in context." Default
@@ -411,7 +421,9 @@ is a summary, not a copy to keep in sync by hand):
   `default_branch`, `delivery_mode`, `herdr_workspace` — the project's
   shared herdr workspace, NULL until its first dispatch).
 - `roadmap` — hierarchical (`parent_id` self-reference), `status` enum
-  `planned|in_progress|blocked|done|dropped`.
+  `planned|in_progress|blocked|done|dropped`, `priority` enum
+  `high|normal|low` (default `normal`) — triage order for the not-done
+  queue, not readiness.
 - `agents` — one row per dispatch (`project_id`, `roadmap_item_id`,
   `worktree_path`, `herdr_workspace`/`herdr_tab`/`herdr_pane`,
   `coding_agent`, `authorization_basis` enum `user-explicit|pre-authorized`
