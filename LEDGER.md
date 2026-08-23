@@ -100,6 +100,19 @@ origin yet. Defaults to `--delivery-mode local-only` rather than
 actually gets a remote. Don't scaffold anything beyond the empty commit
 yourself — what the project becomes is the dispatched agent's job.
 
+**Once a from-scratch (`init`'d) project gets a real remote** — code
+pushed somewhere for the first time — record it:
+
+```sh
+ledger project update <name> [--repo-url <url>] [--delivery-mode <mode>]
+```
+
+Adds a git `origin` remote to the local clone if it doesn't already have
+one; never overwrites an existing remote. `repo_url` in the returned row
+always reflects the actual git remote, not just what was requested — if
+`origin` already existed with a different URL, the response includes a
+`warning` rather than silently recording something git doesn't agree with.
+
 Other project commands: `ledger project list [--json]`, `ledger project get <name>`.
 
 ### Roadmap: turning asks into briefs

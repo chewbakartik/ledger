@@ -23,6 +23,31 @@ export function cloneProject(source: string, destPath: string): { defaultBranch:
   return { defaultBranch: resolveDefaultBranch(destPath) };
 }
 
+/** True if `cwd`'s git repo already has a remote named `name`. */
+export function hasRemote(cwd: string, name: string): boolean {
+  return getRemoteUrl(cwd, name) !== null;
+}
+
+/** The URL of `cwd`'s git remote `name`, or null if it doesn't exist. */
+export function getRemoteUrl(cwd: string, name: string): string | null {
+  try {
+    // "No such remote" is an expected, routine outcome here (not an
+    // error to surface) — suppress git's own stderr for it specifically.
+    return execFileSync("git", ["remote", "get-url", name], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Adds a remote to `cwd`'s git repo. Caller should check `hasRemote` first. */
+export function addRemote(cwd: string, name: string, url: string): void {
+  execFileSync("git", ["remote", "add", name, url], { cwd, encoding: "utf8" });
+}
+
 /**
  * Creates a brand-new project from scratch at `destPath` — for work that
  * doesn't exist anywhere yet (no repo to clone, local or remote). An empty

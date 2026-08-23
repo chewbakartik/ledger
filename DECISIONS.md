@@ -198,6 +198,103 @@ the full `LEDGER.md` only loads when the skill actually fires (invoked by
 name, or a session's own judgment that it's relevant to what's being
 asked) — not on every unrelated session, which was the whole point.
 
+## First real trial dispatch: three real bugs found, all fixed
+
+User dispatched the actual `ledger-notify` build (using `project init` and
+the trial itself as the proof the earlier "known gap" section called out).
+This is exactly what live testing is for — every one of these was
+invisible to the `--kind bogus`/`--kind grok` failure-path tests run during
+implementation, because those never got far enough to hit them.
+
+**Bug 1 — `herdr agent start` fails immediately (`agent_pane_busy`) when
+called right after `createWorkspace`, with zero delay.** `agent dispatch`
+calls `createWorkspace` then `startAgent` back-to-back in the same
+process — milliseconds apart. A pane that young isn't always at rest yet.
+First hypothesis (herdr's own `--timeout` flag documents a 30000ms default
+"wait for interactive readiness" that's skipped when the flag is omitted)
+was tested and **wrong** — passing `--timeout 10000` explicitly changed
+nothing, reproduced the identical immediate failure. What actually
+resolved it in manual testing was real elapsed wall-clock time between the
+two calls. Fixed properly in `startAgent` (`src/lib/herdr.ts`): retry
+specifically on the `agent_pane_busy` error code with a synchronous
+backoff (`Atomics.wait` on a throwaway `SharedArrayBuffer` — the standard
+technique for a blocking sleep in synchronous Node code, no new
+dependency), 300ms interval, 10s total budget. Any other error still fails
+immediately, not retried. Confirmed live: the real dispatch that had
+failed twice at this exact point succeeded on the third attempt (~3.3s
+total, meaning the retry loop genuinely engaged and needed a couple of
+rounds).
+
+**Bug 2 — `herdr agent prompt` doesn't submit long/multi-line text, only
+pastes it.** Confirmed by reading the actual pane content after a
+"successful" dispatch: the task text sat in Claude Code's input box as
+`[Pasted text #1 +12 lines]` — Claude Code's own TUI collapses a
+long/multi-line paste into that placeholder and needs a separate Enter to
+actually send it, and `herdr agent prompt` doesn't send that follow-up
+itself. This isn't an edge case for this tool — `buildTaskPrompt` *always*
+appends a multi-paragraph reporting contract, so every real dispatch hits
+it. Manually confirmed the fix (`herdr pane send-keys <pane> enter`) makes
+the agent immediately start working. Fixed in `promptAgent`
+(`src/lib/herdr.ts`): always send the follow-up Enter. Also restructured
+`--wait` handling while in there — the original code passed `--wait`
+straight through to the `agent prompt` call itself, which would have
+**deadlocked**: it blocks waiting for a state change that can't happen
+until *after* the follow-up Enter is sent. Waiting (when requested) is now
+a separate `agent wait` call issued after the Enter, not baked into the
+prompt call. (Not live-tested with `--wait` specifically — the real
+dispatch used the default, `--wait` not passed — but the deadlock in the
+old code was structural/certain, not a maybe.)
+
+**Live production confirmation, not just the manual repro:** once
+unstuck, the real dispatch ran for real — `npm install`, writing
+`watcher.ts`, running its own scratch tests — and the watcher plugin fired
+for real too: `agents.status` flipped `working`→ (idle blip during
+startup, not persisted since only non-`unknown` overwrites matter for the
+column, but recorded) →`working` again as `ledger event list --agent 1`
+shows, with `updated_at` changing on its own with zero manual DB writes
+from me. This is the first time the watcher has been proven against a
+real dispatch rather than a replayed/simulated payload.
+
+## `ledger project update`: a second real gap, found while setting up the trial
+
+User needed to register `ledger-notify` (the trial's own dispatch target)
+before it existed anywhere — no repo, local or remote — which is what
+motivated `project init` below. That immediately raised the natural
+follow-up: once a from-scratch project's code exists and gets pushed
+somewhere, there was no way to record that. Added
+`ledger project update <name> [--repo-url <url>] [--delivery-mode <mode>]`
+(`src/cli/commands/projects.ts`).
+
+Found and fixed a real bug in my own first version of this while testing
+it: if a git `origin` remote already existed, the command correctly left
+git alone (never overwrite an existing remote) but still wrote the
+*requested* `--repo-url` into the DB regardless — meaning `repo_url` could
+silently diverge from the actual git remote after a second `project
+update` call with a different URL. Fixed: `repo_url` is now always read
+back from git itself when a remote already exists (never trusted from the
+flag in that case), and a mismatch between the requested URL and the
+existing remote surfaces as an explicit `warning` in the output instead of
+being silently swallowed. Also suppressed git's own "No such remote"
+stderr for the routine (non-error) "does origin exist yet" check in
+`getRemoteUrl` — that stderr line was alarming noise for an expected,
+handled outcome, not a real error.
+
+## Deferred: scope of what dispatched agents are expected/allowed to do
+
+Raised by the user, no specifics yet — explicitly parked as a topic to
+expand later, not a decision made now. Current behavior (from DESIGN.md's
+v1 default, `LEDGER.md`'s "For dispatched agents" contract, and what
+`buildTaskPrompt` actually injects) is: an agent executes its one scoped
+task, reports outcome via `agent update --status done --outcome ...`, and
+escalates only by going idle mid-question (herdr's own `blocked`
+detection, picked up automatically) — no roadmap/project/dispatch access,
+no peer coordination. Whether that's the right boundary in practice —
+e.g. should an agent be allowed to file a `ledger event add` note itself,
+should it ever be allowed to dispatch a narrowly-scoped sub-task — is
+open. Revisit once there's real experience (including from this very
+trial) to reason from, same spirit as the deferred `LEDGER.md`-size
+question above.
+
 ## `ledger project init`: a real gap in DESIGN.md's own spec
 
 User caught this trying to pick a trial dispatch target: they wanted to
