@@ -85,6 +85,53 @@ export function closeWorkspace(workspaceId: string): void {
   runHerdr(["workspace", "close", workspaceId]);
 }
 
+/** True if `workspaceId` still exists (wasn't closed, e.g. by the user). */
+export function workspaceExists(workspaceId: string): boolean {
+  try {
+    runHerdr(["workspace", "get", workspaceId]);
+    return true;
+  } catch (err) {
+    if (err instanceof HerdrError && err.code === "workspace_not_found") {
+      return false;
+    }
+    throw err;
+  }
+}
+
+export interface HerdrTabCreateResult {
+  tab: { tab_id: string; workspace_id: string; label: string };
+  root_pane: HerdrPaneInfo;
+}
+
+/** Adds a new tab (with its own root pane) to an existing workspace at `cwd`. */
+export function createTab(opts: {
+  workspace: string;
+  cwd: string;
+  label: string;
+  focus?: boolean;
+}): HerdrTabCreateResult {
+  const args = [
+    "tab",
+    "create",
+    "--workspace",
+    opts.workspace,
+    "--cwd",
+    opts.cwd,
+    "--label",
+    opts.label,
+  ];
+  args.push(opts.focus ? "--focus" : "--no-focus");
+  return runHerdr<HerdrTabCreateResult>(args);
+}
+
+export function closeTab(tabId: string): void {
+  runHerdr(["tab", "close", tabId]);
+}
+
+export function renameTab(tabId: string, label: string): void {
+  runHerdr(["tab", "rename", tabId, label]);
+}
+
 const AGENT_START_READY_RETRY_BUDGET_MS = 10_000;
 const AGENT_START_READY_RETRY_INTERVAL_MS = 300;
 

@@ -45,6 +45,8 @@ export interface ProjectRow {
   default_branch: string;
   delivery_mode: DeliveryMode;
   created_at: string;
+  /** The project's shared herdr workspace — one per project, not per dispatch. NULL until a first dispatch. */
+  herdr_workspace: string | null;
 }
 
 export interface RoadmapRow {

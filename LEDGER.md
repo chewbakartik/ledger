@@ -150,8 +150,16 @@ What this does, in order (see `DECISIONS.md` for why it's shaped this way):
 
 1. `treehouse get --lease` against the project's clone → a durably-leased,
    isolated worktree path.
-2. `herdr workspace create --cwd <that path>` → one call that atomically
-   creates a workspace + tab + root pane there.
+2. **One herdr workspace per project, not per dispatch.** If the project
+   already has a live workspace (`projects.herdr_workspace`, checked with
+   `herdr workspace get` in case the user closed it since), this dispatch
+   adds a new **tab** to it (`herdr tab create --workspace <id> --cwd <that
+   path>`) — so multiple agents working the same project show up as tabs
+   in one workspace, not scattered across separate workspaces. Otherwise
+   this is the project's first dispatch (or its old workspace is gone): a
+   new workspace is created (`herdr workspace create --cwd <that path>`,
+   labeled with the *project* name) and recorded onto the project row for
+   every later dispatch to reuse.
 3. `herdr agent start --kind <kind> --pane <pane>` → starts the coding
    agent in that pane.
 4. Inserts the `agents` row (worktree path + herdr workspace/tab/pane ids)
@@ -160,13 +168,15 @@ What this does, in order (see `DECISIONS.md` for why it's shaped this way):
 5. `herdr agent prompt <pane> "<task + reporting contract>"` → delivers the
    task (see "For dispatched agents" above for exactly what gets appended).
 
-If workspace-creation or agent-start (steps 2-3) fail, the workspace (if
-created) is closed and the worktree lease is returned before the error
-surfaces — no orphaned pane, no phantom `agents` row for a dispatch that
-never actually started. If only the final prompt delivery (step 5) fails,
-the row is *kept* (the agent process is real and running by then) with a
-`dispatch_prompt_failed` event — investigate with `agent get`, retry the
-prompt by hand via `herdr agent prompt`, or `agent release` to abandon it.
+If workspace/tab-creation or agent-start (steps 2-3) fail, that tab (or the
+whole workspace, only if this dispatch just created it — never the shared
+workspace if it was reused, since other agents may be live in it) is closed
+and the worktree lease is returned before the error surfaces — no orphaned
+pane, no phantom `agents` row for a dispatch that never actually started.
+If only the final prompt delivery (step 5) fails, the row is *kept* (the
+agent process is real and running by then) with a `dispatch_prompt_failed`
+event — investigate with `agent get`, retry the prompt by hand via
+`herdr agent prompt`, or `agent release` to abandon it.
 
 Scope each dispatch to a single roadmap sub-item where one exists, rather
 than handing an agent a whole feature — that's the actual point of having
@@ -291,7 +301,8 @@ Full DDL lives in `src/db/migrations/0001_init.ts` (source of truth — this
 is a summary, not a copy to keep in sync by hand):
 
 - `projects` — one row per registered project (`local_clone_path`,
-  `default_branch`, `delivery_mode`).
+  `default_branch`, `delivery_mode`, `herdr_workspace` — the project's
+  shared herdr workspace, NULL until its first dispatch).
 - `roadmap` — hierarchical (`parent_id` self-reference), `status` enum
   `planned|in_progress|blocked|done|dropped`.
 - `agents` — one row per dispatch (`project_id`, `roadmap_item_id`,

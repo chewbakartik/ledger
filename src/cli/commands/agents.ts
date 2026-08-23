@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { getDb } from "../../db/client.js";
 import { CODING_AGENT_KINDS } from "../../db/types.js";
-import type { AgentRow, AgentStatus, CodingAgentKind } from "../../db/types.js";
+import type { AgentRow, AgentStatus, CodingAgentKind, ProjectRow } from "../../db/types.js";
 import * as herdr from "../../lib/herdr.js";
 import { leaseWorktree, returnWorktree } from "../../lib/treehouse.js";
 import { printJson, printTable } from "../format.js";
@@ -65,33 +65,44 @@ export function registerAgentCommands(program: Command): void {
           throw new Error(`--kind must be one of: ${CODING_AGENT_KINDS.join(", ")}`);
         }
         const kind = opts.kind as CodingAgentKind;
-        const label = opts.label ?? deriveLabel(project.name, opts.task);
+        const label = opts.label ?? deriveLabel(opts.task);
 
         const worktreePath = leaseWorktree({
           repoCwd: project.local_clone_path,
           leaseHolder: `ledger:${project.name}`,
         });
 
-        let ws: herdr.HerdrWorkspaceCreateResult | undefined;
+        let pane: DispatchPane | undefined;
         try {
-          ws = herdr.createWorkspace({ cwd: worktreePath, label, focus: false });
-          herdr.startAgent({ name: label, kind, pane: ws.root_pane.pane_id });
+          pane = openDispatchPane(project, worktreePath, label);
+          herdr.startAgent({ name: label, kind, pane: pane.paneId });
         } catch (err) {
           // Best-effort cleanup: don't leave a dangling herdr pane pointed
           // at a worktree that's already back in the treehouse pool, and
           // don't record an agents row for a dispatch that never actually
-          // started. Close the workspace before returning the worktree —
-          // that ends the pane's shell process cleanly, rather than relying
-          // on treehouse's own "terminate lingering processes" fallback.
-          if (ws) {
+          // started. Only close the whole workspace if this dispatch just
+          // created it — if it reused the project's existing workspace,
+          // other tabs/agents may be live in it, so close just this tab.
+          if (pane) {
             try {
-              herdr.closeWorkspace(ws.workspace.workspace_id);
+              if (pane.createdNewWorkspace) herdr.closeWorkspace(pane.workspaceId);
+              else herdr.closeTab(pane.tabId);
             } catch {
               // best-effort
             }
           }
           returnWorktree(worktreePath);
           throw err;
+        }
+
+        // Only now record the project's workspace — a failed first-dispatch
+        // attempt above shouldn't leave the project pointing at a workspace
+        // that was just closed as part of that failure's cleanup.
+        if (pane.createdNewWorkspace) {
+          db.prepare(`UPDATE projects SET herdr_workspace = ? WHERE id = ?`).run(
+            pane.workspaceId,
+            project.id,
+          );
         }
 
         // The coding agent process is now running. Record it *before*
@@ -111,9 +122,9 @@ export function registerAgentCommands(program: Command): void {
             opts.roadmapItem ?? null,
             opts.task,
             worktreePath,
-            ws.workspace.workspace_id,
-            ws.tab.tab_id,
-            ws.root_pane.pane_id,
+            pane.workspaceId,
+            pane.tabId,
+            pane.paneId,
             kind,
             opts.spawnedBy ?? null,
           ) as AgentRow;
@@ -124,7 +135,7 @@ export function registerAgentCommands(program: Command): void {
 
         try {
           herdr.promptAgent({
-            target: ws.root_pane.pane_id,
+            target: pane.paneId,
             text: buildTaskPrompt(row.id, opts.task),
             wait: opts.wait ?? false,
           });
@@ -280,16 +291,62 @@ is the clerk's job, not yours.`;
 }
 
 /**
- * Doubles as the herdr workspace label and the herdr agent name, so it must
+ * Doubles as the herdr tab label and the herdr agent name, so it must
  * satisfy the stricter of the two: herdr agent names must start with a
  * lowercase letter and contain only lowercase letters, digits, '-' or '_',
- * 1-32 characters.
+ * 1-32 characters. No longer prefixed with the project name (it was, when
+ * every dispatch got its own workspace) — that's now redundant, since the
+ * project name is the *workspace's* label and every dispatch to it is a
+ * tab within that one workspace.
  */
-function deriveLabel(projectName: string, task: string): string {
-  const raw = `${projectName}-${task}`
+function deriveLabel(task: string): string {
+  const raw = task
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
   const truncated = raw.slice(0, 32).replace(/-+$/g, "");
   return truncated || "task";
+}
+
+interface DispatchPane {
+  workspaceId: string;
+  tabId: string;
+  paneId: string;
+  createdNewWorkspace: boolean;
+}
+
+/**
+ * One herdr workspace per project, not per dispatch (per the user — see
+ * DECISIONS.md): reuses the project's existing workspace as a new tab when
+ * one is already live, or creates it (and records it via the caller) when
+ * this is the project's first dispatch, or its previous workspace was
+ * closed (e.g. by the user) since the last dispatch.
+ */
+function openDispatchPane(project: ProjectRow, cwd: string, label: string): DispatchPane {
+  if (project.herdr_workspace && herdr.workspaceExists(project.herdr_workspace)) {
+    const tab = herdr.createTab({
+      workspace: project.herdr_workspace,
+      cwd,
+      label,
+      focus: false,
+    });
+    return {
+      workspaceId: project.herdr_workspace,
+      tabId: tab.tab.tab_id,
+      paneId: tab.root_pane.pane_id,
+      createdNewWorkspace: false,
+    };
+  }
+
+  const ws = herdr.createWorkspace({ cwd, label: project.name, focus: false });
+  // workspace create doesn't take a separate tab label — its root tab
+  // gets herdr's own default ("1"); rename it to match every later tab's
+  // task-based labeling for consistency.
+  herdr.renameTab(ws.tab.tab_id, label);
+  return {
+    workspaceId: ws.workspace.workspace_id,
+    tabId: ws.tab.tab_id,
+    paneId: ws.root_pane.pane_id,
+    createdNewWorkspace: true,
+  };
 }

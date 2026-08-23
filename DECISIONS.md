@@ -198,6 +198,59 @@ the full `LEDGER.md` only loads when the skill actually fires (invoked by
 name, or a session's own judgment that it's relevant to what's being
 asked) — not on every unrelated session, which was the whole point.
 
+## One herdr workspace per project, not per dispatch
+
+User feedback after watching the trial run live: they expected the
+dispatched agent to land as a new *tab* in their existing ledger workspace,
+not a whole new workspace. Generalized: one herdr workspace per **project**
+(created lazily, on that project's first dispatch), with every agent
+working that project as a **tab** within it — not one workspace per
+dispatch, which was an arbitrary choice on the implementer's part, not
+something DESIGN.md specified.
+
+This needed a real schema change (`projects.herdr_workspace`, migration
+`0002_project_herdr_workspace.ts` — a plain `ALTER TABLE ... ADD COLUMN`,
+no rebuild needed since it's just a new nullable column, unlike the
+`repo_url` NOT NULL removal earlier). **This is the first migration
+written and applied for real** — by this point `~/.ledger/ledger.db` has
+real rows (the `ledger-notify` project and its agent from the trial), so
+the "edit `0001_init.ts` directly" shortcut used earlier is no longer
+available, exactly as flagged when that shortcut was taken. Verified the
+migration against a **copy** of the real database before letting it touch
+the real one automatically on next use — applied cleanly, existing rows
+preserved, new column defaulted to NULL.
+
+Dispatch logic (`openDispatchPane` in `src/cli/commands/agents.ts`): if
+`project.herdr_workspace` is set and `herdr.workspaceExists()` confirms
+it's still alive, add a new tab to it (`herdr tab create`); otherwise
+create a fresh workspace (`herdr workspace create`, labeled with the
+*project* name now, not a per-dispatch label) and persist its id onto the
+project row — but only *after* `agent start` actually succeeds, same
+reasoning as the `agents` row itself: a failed first-dispatch shouldn't
+leave the project pointing at a workspace that just got torn down as part
+of that failure's cleanup.
+
+This also meant the failure-cleanup path had to branch: tearing down a
+workspace this dispatch just created is still correct (nothing else lives
+in it yet), but tearing down a *reused* workspace on failure would kill
+every other agent's tab in that project — so on failure, only close the
+one tab this dispatch opened (`herdr.closeTab`), never the shared
+workspace. `deriveLabel` dropped its project-name prefix (task text only)
+since it's now redundant — the project name lives on the workspace itself.
+
+Verified live, without spawning any real agents (simulated "project
+already has a workspace" by creating one directly via `herdr workspace
+create` and hand-setting `projects.herdr_workspace` in a scratch DB, since
+real data now exists and it'd be wasteful to spawn a real Claude session
+just to test this): (1) reuse path — a failed second dispatch (`--kind
+grok`, valid enum value, no local binary) added a tab to the existing
+workspace, failed at `agent start`, and correctly closed only that tab —
+confirmed via `herdr workspace get` afterward that the workspace survived
+with its original tab intact (`tab_count` back to 1). (2) fresh-workspace
+path — same failure mode against a project with no prior workspace:
+confirmed the created workspace was fully closed, `herdr_workspace` stayed
+NULL, no phantom `agents` row.
+
 ## First real trial dispatch: three real bugs found, all fixed
 
 User dispatched the actual `ledger-notify` build (using `project init` and
