@@ -1,7 +1,15 @@
 import { Command } from "commander";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { getDb } from "../../db/client.js";
-import { CODING_AGENT_KINDS } from "../../db/types.js";
-import type { AgentRow, AgentStatus, CodingAgentKind, ProjectRow } from "../../db/types.js";
+import { AUTHORIZATION_BASES, CODING_AGENT_KINDS } from "../../db/types.js";
+import type {
+  AgentRow,
+  AgentStatus,
+  AuthorizationBasis,
+  CodingAgentKind,
+  ProjectRow,
+} from "../../db/types.js";
 import * as herdr from "../../lib/herdr.js";
 import { leaseWorktree, returnWorktree } from "../../lib/treehouse.js";
 import { printJson, printTable } from "../format.js";
@@ -27,7 +35,17 @@ export function registerAgentCommands(program: Command): void {
     )
     .requiredOption("--project <name>", "project name")
     .requiredOption("--task <description>", "task instruction for the agent")
+    .requiredOption(
+      "--authorization <basis>",
+      "who authorized this dispatch (user-explicit | pre-authorized) - " +
+        "clerk-attested, recorded on the agent row for audit (C6)",
+    )
     .option("--roadmap-item <id>", "roadmap item this dispatch implements", parseIntOpt)
+    .option(
+      "--confirm-duplicate",
+      "explicit user authorization to run a second live agent on a roadmap " +
+        "item that already has one (C6)",
+    )
     .option("--kind <kind>", "coding agent to run (claude, pi, ...)", "claude")
     .option("--label <label>", "short label for the herdr workspace/pane")
     .option(
@@ -40,7 +58,9 @@ export function registerAgentCommands(program: Command): void {
       (opts: {
         project: string;
         task: string;
+        authorization: string;
         roadmapItem?: number;
+        confirmDuplicate?: boolean;
         kind: string;
         label?: string;
         spawnedBy?: number;
@@ -48,6 +68,13 @@ export function registerAgentCommands(program: Command): void {
       }) => {
         const project = getProjectByName(opts.project);
         const db = getDb();
+
+        if (!AUTHORIZATION_BASES.includes(opts.authorization as AuthorizationBasis)) {
+          throw new Error(
+            `--authorization must be one of: ${AUTHORIZATION_BASES.join(" | ")}`,
+          );
+        }
+        const authorization = opts.authorization as AuthorizationBasis;
 
         if (opts.roadmapItem !== undefined) {
           const item = db
@@ -57,6 +84,23 @@ export function registerAgentCommands(program: Command): void {
           if (item.project_id !== project.id) {
             throw new Error(
               `roadmap item #${opts.roadmapItem} belongs to a different project`,
+            );
+          }
+          // C6: refuse a second live agent on an item that already has one
+          // without explicit confirmation. done/idle rows are terminal or
+          // dormant and don't count as live.
+          const live = db
+            .prepare(
+              `SELECT id FROM agents
+               WHERE roadmap_item_id = ? AND status IN ('working', 'blocked')`,
+            )
+            .all(opts.roadmapItem) as { id: number }[];
+          if (live.length > 0 && !opts.confirmDuplicate) {
+            throw new Error(
+              `roadmap item #${opts.roadmapItem} already has a live agent ` +
+                `(${live.map((a) => `#${a.id}`).join(", ")}) — a second dispatch ` +
+                `needs the user's explicit word; pass --confirm-duplicate only ` +
+                `if they gave it (C6)`,
             );
           }
         }
@@ -139,8 +183,8 @@ export function registerAgentCommands(program: Command): void {
           .prepare(
             `INSERT INTO agents (
                project_id, roadmap_item_id, task_description, worktree_path,
-               herdr_workspace, herdr_tab, herdr_pane, coding_agent, spawned_by
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               herdr_workspace, herdr_tab, herdr_pane, coding_agent, authorization_basis, spawned_by
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              RETURNING *`,
           )
           .get(
@@ -152,12 +196,13 @@ export function registerAgentCommands(program: Command): void {
             pane.tabId,
             pane.paneId,
             kind,
+            authorization,
             opts.spawnedBy ?? null,
           ) as AgentRow;
 
         db.prepare(
           `INSERT INTO events (agent_id, event_type, payload) VALUES (?, 'dispatched', ?)`,
-        ).run(row.id, JSON.stringify({ task: opts.task, kind }));
+        ).run(row.id, JSON.stringify({ task: opts.task, kind, authorization }));
 
         try {
           herdr.promptAgent({
@@ -251,12 +296,41 @@ export function registerAgentCommands(program: Command): void {
     .command("release <id>")
     .description(
       "return the agent's leased worktree to the treehouse pool and close its " +
-        "herdr tab. Does not change agents.status — do that separately with " +
+        "herdr tab. Refuses unless the work in the worktree is proven durable " +
+        "(C3 in DECISIONS.md); --force is the user's explicit authorization " +
+        "to discard. Does not change agents.status — do that separately with " +
         "'agent update' if appropriate.",
     )
-    .action((id: string) => {
+    .option(
+      "--force",
+      "explicit user authorization to discard whatever is in the worktree — " +
+        "bypasses the survival proof; never a repair path for a bad proof (C3)",
+    )
+    .action((id: string, opts: { force?: boolean }) => {
       const db = getDb();
       const row = getAgentById(Number(id));
+
+      const proof = survivalProof(row.worktree_path);
+      if (proof.state !== "durable" && !opts.force) {
+        // Fail closed: record the refusal and hand the decision to the
+        // clerk→user channel. Never auto-discard work we couldn't prove
+        // survives somewhere durable.
+        db.prepare(
+          `INSERT INTO events (agent_id, event_type, payload) VALUES (?, 'release_refused', ?)`,
+        ).run(row.id, JSON.stringify({ survival: proof }));
+        const what =
+          proof.state === "at-risk"
+            ? `${proof.uncommittedChanges ?? 0} uncommitted change(s) and/or ` +
+              `${proof.unpushedCommits ?? 0} commit(s) on branch ` +
+              `'${proof.branch}' not on any remote`
+            : (proof.reason ?? "unknown");
+        throw new Error(
+          `refusing to release agent #${row.id}: its work is ${proof.state} — ` +
+            `${what}. Escalate to the user before discarding; pass --force ` +
+            `only with the user's explicit authorization to discard this ` +
+            `work (C3).`,
+        );
+      }
 
       returnWorktree(row.worktree_path);
       try {
@@ -270,10 +344,18 @@ export function registerAgentCommands(program: Command): void {
       }
 
       db.prepare(
-        `INSERT INTO events (agent_id, event_type, payload) VALUES (?, 'released', NULL)`,
-      ).run(row.id);
+        `INSERT INTO events (agent_id, event_type, payload) VALUES (?, 'released', ?)`,
+      ).run(
+        row.id,
+        JSON.stringify({ survival: proof, forced: opts.force ?? false }),
+      );
 
-      printJson({ released: true, agent_id: row.id, worktree_path: row.worktree_path });
+      printJson({
+        released: true,
+        agent_id: row.id,
+        worktree_path: row.worktree_path,
+        survival: proof,
+      });
     });
 }
 
@@ -295,6 +377,93 @@ function parseIntOpt(value: string): number {
   const n = Number.parseInt(value, 10);
   if (Number.isNaN(n)) throw new Error(`not a valid integer: ${value}`);
   return n;
+}
+
+type SurvivalState = "durable" | "at-risk" | "unprovable";
+
+interface SurvivalProof {
+  state: SurvivalState;
+  /** Branch checked out in the worktree (or "HEAD" if detached). */
+  branch?: string;
+  /** Uncommitted changes in the worktree, including untracked files. */
+  uncommittedChanges?: number;
+  /** Commits on the checked-out branch not present on any remote. */
+  unpushedCommits?: number;
+  /** Why the proof could not be established (unprovable). */
+  reason?: string;
+}
+
+function gitIn(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" });
+}
+
+/**
+ * Clerk gate C3 (DECISIONS.md, 2026-08-23): before `agent release` returns a
+ * worktree that may hold work, establish a three-state proof of where that work stands:
+ *
+ *   durable   — nothing uncommitted, and every commit on this worktree's
+ *               checked-out branch is already on a remote (pushed or merged)
+ *               → the work survives the worktree being reset away; safe to
+ *               auto-return.
+ *   at-risk   — uncommitted changes and/or commits on a local ref that no
+ *               remote has → returning the worktree (treehouse `return
+ *               --force` resets it) would destroy them.
+ *   unprovable— git failed, or the worktree can't be inspected → fail
+ *               closed, treated like at-risk.
+ *
+ * Only the checked-out branch is inspected: all worktrees of one repo share
+ * refs, so counting every local branch would misattribute other agents'
+ * unpushed work to this release.
+ */
+function survivalProof(worktreePath: string): SurvivalProof {
+  if (!existsSync(worktreePath)) {
+    return {
+      state: "durable",
+      reason: "worktree path no longer exists — nothing to lose",
+    };
+  }
+
+  let status: string;
+  let branch: string;
+  try {
+    status = gitIn(worktreePath, ["status", "--porcelain"]);
+    branch = gitIn(worktreePath, ["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  } catch (err) {
+    return {
+      state: "unprovable",
+      reason: `git failed in ${worktreePath}: ${(err as Error).message}`,
+    };
+  }
+
+  let unpushed: number;
+  try {
+    // `--remotes` expands to local remote-tracking refs only (no network
+    // call). A commit counts as durable iff some remote already has it —
+    // including the merged case, where a remote branch contains it. With
+    // no remotes at all (a from-scratch local-only project) every commit
+    // counts as unpushed, which is right: there is nowhere for it to be
+    // durable yet.
+    unpushed = Number.parseInt(
+      gitIn(worktreePath, ["rev-list", "HEAD", "--not", "--remotes", "--count"]).trim(),
+      10,
+    );
+  } catch (err) {
+    return {
+      state: "unprovable",
+      reason: `git failed in ${worktreePath}: ${(err as Error).message}`,
+    };
+  }
+
+  const uncommitted = status.trim() === "" ? 0 : status.trim().split("\n").length;
+  if (uncommitted === 0 && unpushed === 0) {
+    return { state: "durable", branch, uncommittedChanges: 0, unpushedCommits: 0 };
+  }
+  return {
+    state: "at-risk",
+    branch,
+    uncommittedChanges: uncommitted,
+    unpushedCommits: unpushed,
+  };
 }
 
 /**

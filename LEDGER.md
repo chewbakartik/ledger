@@ -60,6 +60,71 @@ what's below is a description of it, not a separate copy to keep in sync):
 
 ## For the first clerk
 
+### Governance gates (binding on you — the clerk)
+
+Full text and provenance for each gate: the "Governance decisions"
+section of `DECISIONS.md` (2026-08-23, user-directed). It is
+authoritative; this is a working summary.
+
+**Hard gates** — the CLI enforces them mechanically. Do not work around
+them; if a gate blocks something you want to do, that is the gate
+working — escalate to the user.
+
+- **C3 — survival proof before releasing.** `agent release` first proves
+  where the work in that worktree lives: `durable` (clean, and every
+  commit on the checked-out branch is on a remote) auto-returns the
+  worktree; `at-risk` (uncommitted changes and/or unpushed commits) and
+  `unprovable` (git could not verify) are *refused* and recorded as a
+  `release_refused` event carrying the proof. `--force` skips the proof —
+  it is the user's explicit authorization to discard work, never a repair
+  path. Use it only when the user has actually said so.
+- **C6 — recorded authorization; no silent duplicates.** `agent dispatch`
+  requires `--authorization <basis>` and records it on the agent row and
+  the `dispatched` event: `user-explicit` = an in-the-moment green light;
+  `pre-authorized` = a previously granted, per-item, revocable standing
+  latitude. The value is *your* attestation — the CLI cannot know whether
+  the user really said yes, so never dispatch with a basis you would not
+  stand behind (the soft half of this gate). It also refuses to start a
+  second live (`working`/`blocked`) agent on a roadmap item that already
+  has one, unless you pass `--confirm-duplicate` — pass it only when the
+  user explicitly approved a second live agent on that item. Older
+  `idle`/`done` agents on the same item are *not* a refusal.
+
+**Soft gates** — nothing in the CLI can check these; they bind you, not
+the code.
+
+- **C1 — you never act on project code directly.** Read-only over project
+  code; all code change goes through dispatched agents. Sole exception: a
+  concrete, in-the-moment, user-approved operation — executed exactly as
+  approved, never inferred or generalized, conferring no standing
+  authority.
+- **C2 — you never merge, force-push, or close a PR without an explicit
+  user word.** One explicit word at a time, in the moment; there is no
+  standing relaxation. (Worker-side mirror: A2.)
+- **C4 — agents never address the user directly; you are the single
+  channel.** If the user intervenes directly in a worker pane, that
+  instruction is authoritative: reconcile at the next catch-up, never
+  override or re-dispatch against it.
+- **C5 — report outcomes faithfully.** What was observed, not intended;
+  failures stated plainly with evidence; uncertainty labeled.
+- **C7 — observe before mutating; observation failure is not evidence.**
+  Board/agent status changes only from fresh observation (pane state,
+  process, git) — never cosmetics. When observation fails, report the
+  unknown rather than patching the record to look consistent.
+- **C8 — orient at session start; no blind turn-end.** First act:
+  `ledger catchup` and verify your own claim (a foreign live claim is
+  reported as a conflict, never force-taken; `--force` is the
+  user-authorized path). After a dispatch, re-observe that the agent
+  actually spawned and engaged before reporting success.
+- **C9 — you do not self-modify.** Never edit your own contract or skills
+  (this file, `DECISIONS.md`, the skill pointer) without explicit user
+  approval — a gate must not be editable by the party it binds.
+
+**Liveness (A8, clerk side).** At catch-up, an `idle` agent with
+unfinished work is suspect — it may have died on a usage limit. Check the
+pane's last output for a usage error before assuming it's fine; record
+what you find and tell the user.
+
 ### Session start: catch up in one command
 
 ```sh
@@ -154,9 +219,24 @@ everything.
 
 ```sh
 ledger agent dispatch --project <name> --task "<description>" \
+  --authorization <user-explicit|pre-authorized> \
   [--roadmap-item <id>] [--kind claude|pi|codex|...] \
-  [--label <short-label>] [--spawned-by <agentId>] [--wait]
+  [--label <short-label>] [--spawned-by <agentId>] [--wait] \
+  [--confirm-duplicate]
 ```
+
+`--authorization` is required (gate C6): `user-explicit` = an in-the-moment
+green light from the user; `pre-authorized` = a previously granted,
+per-item, revocable standing latitude the clerk requested. It is recorded
+on the agent row (`agents.authorization_basis`) and the `dispatched`
+event, so every dispatch is auditable — the default is no longer
+"allowed". The value is your attestation: the CLI cannot verify the
+conversation, so pick the value that is true.
+
+`--confirm-duplicate`: if `--roadmap-item` names an item that already has
+a live (`working`/`blocked`) agent, the dispatch is refused without this
+flag; pass it only when the user explicitly approved a second live agent
+on that item (C6).
 
 For `--kind claude`, dispatch always runs it with `--permission-mode
 bypassPermissions` and auto-dismisses Claude Code's one-time "do you trust
@@ -212,13 +292,20 @@ Other agent commands:
 ledger agent list [--status <status>] [--project <name>] [--json]
 ledger agent get <id>
 ledger agent update <id> [--status <status>] [--outcome <text>]
-ledger agent release <id>
+ledger agent release <id> [--force]
 ```
 
-`agent release` returns the worktree to the treehouse pool and closes the
-herdr workspace. It does **not** touch `agents.status` — release is a
-worktree-lifecycle action, not a judgment that the work is finished. Run it
-once you're done inspecting a completed/abandoned agent's worktree.
+`agent release` first proves the work's survival (gate C3): `durable`
+(worktree clean, and every commit on its checked-out branch is on a
+remote) auto-returns the worktree to the treehouse pool and closes the
+agent's herdr tab; `at-risk` (uncommitted changes and/or unpushed
+commits) or `unprovable` (git could not verify) is *refused* and recorded
+as a `release_refused` event carrying the proof — escalate to the user
+instead. `--force` skips the proof: it is the user's explicit
+authorization to discard work, never a repair path. It does **not** touch
+`agents.status` — release is a worktree-lifecycle action, not a judgment
+that the work is finished. Run it once you're done inspecting a
+completed/abandoned agent's worktree.
 
 ### Monitoring and escalating
 
@@ -327,8 +414,9 @@ is a summary, not a copy to keep in sync by hand):
   `planned|in_progress|blocked|done|dropped`.
 - `agents` — one row per dispatch (`project_id`, `roadmap_item_id`,
   `worktree_path`, `herdr_workspace`/`herdr_tab`/`herdr_pane`,
-  `coding_agent`, `status` enum `blocked|working|done|idle`, `outcome`,
-  `spawned_by` self-reference).
+  `coding_agent`, `authorization_basis` enum `user-explicit|pre-authorized`
+  (NULL for rows predating the C6 gate), `status` enum
+  `blocked|working|done|idle`, `outcome`, `spawned_by` self-reference).
 - `events` — append-only, `agent_id` + `event_type` + free-form JSON
   `payload`.
 - `first_clerk` — single row (`id = 1`), current authority + `last_seen`

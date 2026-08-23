@@ -9,6 +9,19 @@ export type RoadmapStatus =
 
 export type AgentStatus = "blocked" | "working" | "done" | "idle";
 
+// Clerk gate C6 (DECISIONS.md): how a dispatch was authorized.
+// 'user-explicit' = an in-the-moment green light from the user;
+// 'pre-authorized' = a previously granted, per-item, revocable standing
+// latitude. The value is clerk-attested (the CLI cannot verify the
+// conversation) — the mechanics only require that every dispatch declares
+// one and that it is recorded, so the board is auditable.
+export type AuthorizationBasis = "user-explicit" | "pre-authorized";
+
+export const AUTHORIZATION_BASES: AuthorizationBasis[] = [
+  "user-explicit",
+  "pre-authorized",
+];
+
 // Mirrors `herdr agent start --kind`'s accepted values.
 export const CODING_AGENT_KINDS = [
   "pi",
@@ -71,6 +84,8 @@ export interface AgentRow {
   herdr_pane: string;
   coding_agent: CodingAgentKind;
   status: AgentStatus;
+  /** NULL only for rows predating the C6 authorization gate (migration 0003). */
+  authorization_basis: AuthorizationBasis | null;
   outcome: string | null;
   spawned_by: number | null;
   created_at: string;
