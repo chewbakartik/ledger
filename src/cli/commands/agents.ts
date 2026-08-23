@@ -9,6 +9,13 @@ import { getProjectByName } from "./projects.js";
 
 const VALID_STATUSES: AgentStatus[] = ["blocked", "working", "done", "idle"];
 
+// Dispatched Claude agents run unattended — nobody is present in the pane
+// to answer a permission prompt, so "auto" mode (Claude Code's default,
+// which still prompts for some actions) would just stall. bypassPermissions
+// skips all of them. Per the user: scoped to claude specifically, not
+// every coding-agent kind.
+const CLAUDE_BYPASS_ARGS = ["--permission-mode", "bypassPermissions"];
+
 export function registerAgentCommands(program: Command): void {
   const agent = program.command("agent").description("manage dispatched agents");
 
@@ -75,7 +82,26 @@ export function registerAgentCommands(program: Command): void {
         let pane: DispatchPane | undefined;
         try {
           pane = openDispatchPane(project, worktreePath, label);
-          herdr.startAgent({ name: label, kind, pane: pane.paneId });
+          herdr.startAgent({
+            name: label,
+            kind,
+            pane: pane.paneId,
+            ...(kind === "claude" ? { extraArgs: CLAUDE_BYPASS_ARGS } : {}),
+          });
+          if (kind === "claude") {
+            // Claude Code shows a one-time "do you trust this folder?"
+            // dialog for any directory it hasn't seen before — which every
+            // treehouse worktree is, from its point of view — and neither
+            // --permission-mode bypassPermissions nor
+            // --dangerously-skip-permissions skips it (confirmed live, see
+            // DECISIONS.md). Nobody is present in a dispatched pane to
+            // answer it, so it would hang forever otherwise. Dismissing
+            // with Enter accepts the default ("1. Yes, I trust this
+            // folder"); confirmed harmless as a no-op when the directory
+            // was already trusted (a reused treehouse worktree slot).
+            herdr.sleepSync(300);
+            herdr.sendKeys(pane.paneId, "enter");
+          }
         } catch (err) {
           // Best-effort cleanup: don't leave a dangling herdr pane pointed
           // at a worktree that's already back in the treehouse pool, and

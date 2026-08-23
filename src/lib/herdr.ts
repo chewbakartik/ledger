@@ -17,22 +17,25 @@ interface HerdrEnvelope<T> {
   error?: { code: string; message: string };
 }
 
+/** Throws HerdrError (or a generic Error) from a failed herdr invocation. */
+function throwHerdrFailure(args: string[], err: unknown): never {
+  const e = err as { stdout?: string; stderr?: string; message: string };
+  // herdr still writes its JSON error envelope to stdout on failure.
+  if (e.stdout) {
+    const parsed = tryParseEnvelope<unknown>(e.stdout);
+    if (parsed?.error) {
+      throw new HerdrError(parsed.error.code, parsed.error.message);
+    }
+  }
+  throw new Error(`herdr ${args.join(" ")} failed: ${e.stderr ?? e.message}`);
+}
+
 function runHerdr<T>(args: string[]): T {
   let stdout: string;
   try {
     stdout = execFileSync("herdr", args, { encoding: "utf8" });
   } catch (err) {
-    const e = err as { stdout?: string; stderr?: string; message: string };
-    // herdr still writes its JSON error envelope to stdout on failure.
-    if (e.stdout) {
-      const parsed = tryParseEnvelope<T>(e.stdout);
-      if (parsed?.error) {
-        throw new HerdrError(parsed.error.code, parsed.error.message);
-      }
-    }
-    throw new Error(
-      `herdr ${args.join(" ")} failed: ${e.stderr ?? e.message}`,
-    );
+    throwHerdrFailure(args, err);
   }
 
   const parsed = tryParseEnvelope<T>(stdout);
@@ -46,6 +49,20 @@ function runHerdr<T>(args: string[]): T {
     throw new Error(`herdr ${args.join(" ")}: response had no result`);
   }
   return parsed.result;
+}
+
+/**
+ * Like `runHerdr`, but for commands confirmed live to return empty stdout
+ * on success rather than herdr's usual JSON envelope (`pane send-keys` —
+ * see DECISIONS.md). A non-throwing exit is success regardless of stdout
+ * content; a thrown error is still parsed the normal way.
+ */
+function runHerdrAction(args: string[]): void {
+  try {
+    execFileSync("herdr", args, { encoding: "utf8" });
+  } catch (err) {
+    throwHerdrFailure(args, err);
+  }
 }
 
 function tryParseEnvelope<T>(text: string): HerdrEnvelope<T> | undefined {
@@ -135,7 +152,7 @@ export function renameTab(tabId: string, label: string): void {
 const AGENT_START_READY_RETRY_BUDGET_MS = 10_000;
 const AGENT_START_READY_RETRY_INTERVAL_MS = 300;
 
-function sleepSync(ms: number): void {
+export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
@@ -155,8 +172,13 @@ export function startAgent(opts: {
   name: string;
   kind: CodingAgentKind;
   pane: string;
+  /** Passed through to the launched agent binary itself (after `--`). */
+  extraArgs?: string[];
 }): void {
   const args = ["agent", "start", opts.name, "--kind", opts.kind, "--pane", opts.pane];
+  if (opts.extraArgs && opts.extraArgs.length > 0) {
+    args.push("--", ...opts.extraArgs);
+  }
   const deadline = Date.now() + AGENT_START_READY_RETRY_BUDGET_MS;
 
   for (;;) {
@@ -169,6 +191,10 @@ export function startAgent(opts: {
       sleepSync(AGENT_START_READY_RETRY_INTERVAL_MS);
     }
   }
+}
+
+export function sendKeys(paneId: string, ...keys: string[]): void {
+  runHerdrAction(["pane", "send-keys", paneId, ...keys]);
 }
 
 /**
@@ -193,7 +219,7 @@ export function promptAgent(opts: {
   timeoutMs?: number;
 }): void {
   runHerdr(["agent", "prompt", opts.target, opts.text]);
-  runHerdr(["pane", "send-keys", opts.target, "enter"]);
+  sendKeys(opts.target, "enter");
 
   if (opts.wait) {
     const waitArgs = ["agent", "wait", opts.target];

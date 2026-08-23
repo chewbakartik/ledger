@@ -198,6 +198,75 @@ the full `LEDGER.md` only loads when the skill actually fires (invoked by
 name, or a session's own judgment that it's relevant to what's being
 asked) — not on every unrelated session, which was the whole point.
 
+## Claude agents dispatch in bypass-permissions mode, not auto
+
+User: dispatched Claude agents should run in `bypass` permission mode, not
+`auto` — makes sense on its own (a dispatched agent has nobody present in
+its pane to answer a permission prompt; `auto` mode still prompts for some
+actions, which would just stall it forever). Scoped to `claude` only, per
+the user, not every coding-agent kind.
+
+Implementation needed two things, both verified live:
+
+1. **The actual flag.** `herdr agent start` passes anything after `--`
+   straight through to the launched binary's own argv (confirmed via the
+   `argv` field in its own response). Used `--permission-mode
+   bypassPermissions` — Claude Code's own documented mode enum (`auto`,
+   `bypassPermissions`, etc. — the user's "bypass not auto" language maps
+   directly onto it), added to `startAgent`'s existing pattern of a generic
+   `extraArgs` passthrough rather than a claude-specific parameter, kept in
+   `agents.ts`'s dispatch orchestration (`CLAUDE_BYPASS_ARGS`) rather than
+   in the herdr wrapper, since it's ledger's policy choice, not a herdr
+   concern.
+
+2. **A real, separate blocker found while verifying this: Claude Code's
+   "do you trust this folder?" dialog.** Neither `--permission-mode
+   bypassPermissions` nor `--dangerously-skip-permissions` skips it —
+   tested both live, dialog appeared either way. Every treehouse worktree
+   is, from Claude Code's point of view, a folder it's never seen, so a
+   dispatched agent would sit at this dialog forever with nobody there to
+   answer it. Considered pre-writing `hasTrustDialogAccepted: true` into
+   `~/.claude.json`'s `projects[path]` entry (confirmed that's where the
+   "yes" answer persists) but rejected it: that file is Claude Code's
+   entire global state across every session on the machine, not just
+   ledger's — full read-modify-write of something that large and sensitive
+   for this is a real corruption/race risk for a narrow gain. Went with
+   the much smaller-blast-radius fix instead: send Enter after start
+   (accepts the dialog's default, "1. Yes, I trust this folder"), same
+   pattern as the earlier paste-submit fix. Verified live both that it
+   correctly dismisses the dialog on a genuinely fresh directory, and that
+   it's a harmless no-op when the directory was already trusted (sending
+   Enter into an already-ready, dialog-free session did nothing observable)
+   — meaning it's safe to send unconditionally rather than needing to
+   detect whether the dialog is actually showing.
+
+**A third bug found in the course of verifying this, unrelated to bypass
+mode itself:** `herdr pane send-keys` returns *empty stdout on success*,
+not herdr's usual JSON envelope — confirmed live. `runHerdr`'s generic
+"every herdr command returns JSON" assumption was wrong for this one
+specific command, and `sendKeys` (added for the earlier paste-submit fix)
+inherited that assumption, so it threw `could not parse JSON output` on
+every actual success. This means **the paste-submit fix from the previous
+session was never actually exercised through the real TypeScript code
+path** — it was verified only by running the equivalent `herdr` command
+by hand in bash at the time, not through `promptAgent` itself, so the bug
+in `sendKeys` went unnoticed until this dispatch (the first real one to
+exercise that exact code path) hit it and its own failure-cleanup tore the
+whole attempt down. Fixed by splitting `runHerdr` into two: the original
+(requires a parseable JSON envelope) and a new `runHerdrAction` (tolerant
+of empty stdout — success is "didn't throw," not "returned JSON"), sharing
+the same error-extraction logic so failure handling didn't fork. `agent
+prompt` itself was separately confirmed live to reliably return JSON, so
+it stays on the strict path — this wasn't a systemic issue with every
+herdr command, just this one.
+
+Full chain verified together in one real dispatch (`bypass-verify`, a
+throwaway project, cleaned up after): trust dialog dismissed automatically,
+`bypass permissions on` visible in the pane, full task text delivered and
+submitted (not stuck as an unsent paste), agent actively processed it, and
+self-reported `done` via the injected reporting contract — the complete
+path, for real, all three fixes working together.
+
 ## One herdr workspace per project, not per dispatch
 
 User feedback after watching the trial run live: they expected the

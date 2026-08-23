@@ -146,6 +146,14 @@ ledger agent dispatch --project <name> --task "<description>" \
   [--label <short-label>] [--spawned-by <agentId>] [--wait]
 ```
 
+For `--kind claude`, dispatch always runs it with `--permission-mode
+bypassPermissions` and auto-dismisses Claude Code's one-time "do you trust
+this folder?" dialog (every treehouse worktree is, from its point of view,
+a folder it's never seen — nobody's present in that pane to answer it, so
+without this it would just hang forever). Both confirmed live — see
+`DECISIONS.md`. Scoped to `claude` specifically per the user; other kinds
+run with whatever their own default permission behavior is.
+
 What this does, in order (see `DECISIONS.md` for why it's shaped this way):
 
 1. `treehouse get --lease` against the project's clone → a durably-leased,
