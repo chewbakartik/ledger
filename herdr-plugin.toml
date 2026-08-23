@@ -1,0 +1,16 @@
+# The ledger watcher: not a daemon, just an event hook. herdr invokes
+# `node dist/plugin/watcher.js` once per pane_agent_status_changed event; the
+# process reads HERDR_PLUGIN_EVENT_JSON, updates the ledger, and exits.
+# See DESIGN.md ("The watcher: a herdr plugin, not a daemon").
+#
+# Local development: `herdr plugin link .` from this repo (after `npm run build`).
+
+id = "ledger"
+name = "ledger"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Watcher for the ledger agent-orchestration state store: keeps agents.status and the events audit trail in sync with herdr pane state, with zero standing process."
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["node", "dist/plugin/watcher.js"]
