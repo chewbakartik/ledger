@@ -198,6 +198,33 @@ the full `LEDGER.md` only loads when the skill actually fires (invoked by
 name, or a session's own judgment that it's relevant to what's being
 asked) — not on every unrelated session, which was the whole point.
 
+## `workspaceExists` bug: herdr's error envelope isn't always on stdout
+
+Found dispatching the real PR-opening agent for `ledger-notify` (its first
+dispatch since the previous workspace, `wE`, was closed after both earlier
+agents were released). `openDispatchPane` calls `workspaceExists('wE')` to
+decide reuse-vs-recreate; it should have caught `workspace_not_found` and
+returned `false`, but instead the raw error propagated and killed the
+dispatch. Root cause: `throwHerdrFailure` only ever checked `e.stdout` for
+herdr's JSON error envelope — every failure mode hit so far this session
+(`agent_pane_busy`, `unsupported interactive agent kind`, etc.) happened to
+put it there. `workspace get` on a missing id puts it on **stderr**
+instead. Fixed to check both streams. Verified directly:
+`workspaceExists('wE')` now correctly returns `false` (closed workspace)
+and `workspaceExists('w3')` correctly returns `true` (this session's own
+live workspace) — confirmed no phantom `agents` row or leaked treehouse
+lease from the failed attempt beforehand.
+
+Also gave `runHerdr` an opt-in `quiet` mode (explicit `stdio: ["ignore",
+"pipe", "pipe"]`, not the default) for `workspaceExists` specifically —
+without it, the fix above still worked correctly but printed the raw
+`workspace_not_found` JSON straight to the terminal on every dispatch
+where reuse was attempted, since that's now the *routine* case, not an
+edge case. Note for future use of this pattern: `"ignore"` on the stderr
+slot would have silently broken error-code parsing entirely (nothing to
+read), not just suppressed the printing — needed explicit `"pipe"` to keep
+capturing it for `throwHerdrFailure` while just not echoing it.
+
 ## PR creation: wire up `delivery_mode`, but stay tool-agnostic
 
 User has `tea` (Forgejo's CLI) installed for agents to open PRs, and asked

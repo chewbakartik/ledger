@@ -20,9 +20,13 @@ interface HerdrEnvelope<T> {
 /** Throws HerdrError (or a generic Error) from a failed herdr invocation. */
 function throwHerdrFailure(args: string[], err: unknown): never {
   const e = err as { stdout?: string; stderr?: string; message: string };
-  // herdr still writes its JSON error envelope to stdout on failure.
-  if (e.stdout) {
-    const parsed = tryParseEnvelope<unknown>(e.stdout);
+  // herdr's JSON error envelope can land on stdout or stderr depending on
+  // the command — confirmed live: `workspace get` on a missing id writes
+  // it to stderr, unlike every other failure observed so far (stdout).
+  // Check both rather than assuming one.
+  for (const text of [e.stdout, e.stderr]) {
+    if (!text) continue;
+    const parsed = tryParseEnvelope<unknown>(text);
     if (parsed?.error) {
       throw new HerdrError(parsed.error.code, parsed.error.message);
     }
@@ -30,10 +34,17 @@ function throwHerdrFailure(args: string[], err: unknown): never {
   throw new Error(`herdr ${args.join(" ")} failed: ${e.stderr ?? e.message}`);
 }
 
-function runHerdr<T>(args: string[]): T {
+function runHerdr<T>(args: string[], opts?: { quiet?: boolean }): T {
   let stdout: string;
   try {
-    stdout = execFileSync("herdr", args, { encoding: "utf8" });
+    stdout = execFileSync("herdr", args, {
+      encoding: "utf8",
+      // Explicit "pipe" (not the default) captures stderr for
+      // throwHerdrFailure to parse WITHOUT echoing it to the terminal —
+      // "ignore" would lose it entirely, breaking error-code detection
+      // for errors that land on stderr (see DECISIONS.md).
+      ...(opts?.quiet ? { stdio: ["ignore", "pipe", "pipe"] } : {}),
+    });
   } catch (err) {
     throwHerdrFailure(args, err);
   }
@@ -105,7 +116,10 @@ export function closeWorkspace(workspaceId: string): void {
 /** True if `workspaceId` still exists (wasn't closed, e.g. by the user). */
 export function workspaceExists(workspaceId: string): boolean {
   try {
-    runHerdr(["workspace", "get", workspaceId]);
+    // quiet: this is a routine "is it still there?" check, run on every
+    // dispatch — a missing workspace is an expected, handled outcome, not
+    // noise worth printing to the terminal every time.
+    runHerdr(["workspace", "get", workspaceId], { quiet: true });
     return true;
   } catch (err) {
     if (err instanceof HerdrError && err.code === "workspace_not_found") {
