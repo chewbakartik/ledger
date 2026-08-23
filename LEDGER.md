@@ -31,8 +31,17 @@ plus this contract appended automatically (`buildTaskPrompt` in
 `src/cli/commands/agents.ts` — that function is the single source of truth;
 what's below is a description of it, not a separate copy to keep in sync):
 
-- **When you're done**, your last action is:
-  `ledger agent update <your-agent-id> --status done --outcome '<pr-url-or-branch-or-report-path>'`
+- **Always work on a new branch** — never commit directly to the project's
+  default branch, regardless of delivery mode.
+- **When you're done**, what your last action looks like depends on the
+  project's `delivery_mode`:
+  - `direct-pr`: open a pull request against the default branch — using
+    whatever tooling is available for that project's remote (e.g. `tea`
+    for a Forgejo remote; ledger doesn't care which, that's your call) —
+    then `ledger agent update <your-agent-id> --status done --outcome
+    '<pr-url>'`.
+  - `local-only`: just `ledger agent update <your-agent-id> --status done
+    --outcome '<branch-name-or-report-path>'`.
   Your agent id was given to you in your initial prompt.
 - **If you get stuck and need a human/clerk decision before you can
   continue**: just state the question and stop where you are (don't spin,

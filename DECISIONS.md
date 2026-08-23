@@ -198,6 +198,33 @@ the full `LEDGER.md` only loads when the skill actually fires (invoked by
 name, or a session's own judgment that it's relevant to what's being
 asked) — not on every unrelated session, which was the whole point.
 
+## PR creation: wire up `delivery_mode`, but stay tool-agnostic
+
+User has `tea` (Forgejo's CLI) installed for agents to open PRs, and asked
+whether that belongs in core or as an extension. Answer: split. Wiring
+`project.delivery_mode` to actual dispatch behavior is core — the field
+already exists in the schema and `outcome` was already documented as
+possibly a `pr_url`, so this closes a real gap between the schema's intent
+and what dispatch actually told agents to do (previously nothing — the
+reporting contract never mentioned branching or PRs at all). *Which* tool
+opens the PR is explicitly left out of core: `buildTaskPrompt` now says
+"open a pull request... using whatever tooling is available for this
+project's remote (e.g. `tea` for a Forgejo remote)" rather than hard-coding
+`tea` — ledger never shells out to it, never checks it's installed, has no
+opinion. The dispatched agent already has full shell access and a
+`tea --help` away from figuring out the exact invocation itself, same as
+it already does for git/npm/whatever else a task needs. Baking a `tea`
+wrapper into the CLI would be surface ledger doesn't need and wouldn't
+survive a tool switch later.
+
+`buildTaskPrompt` now takes the full `ProjectRow` (previously just
+`agentId`/`task`) and branches its delivery instructions on
+`delivery_mode`, and — for both modes — now explicitly tells the agent to
+work on a new branch, never commit directly to the default branch. That
+last part wasn't delivery-mode-specific and was missing entirely before;
+both real trial agents happened to branch on their own initiative, but
+nothing in the contract actually told them to.
+
 ## `agent release` fix: close the tab, not the whole shared workspace
 
 User asked to release agent #2 (the verification agent from the two-tabs

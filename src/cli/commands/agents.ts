@@ -162,7 +162,7 @@ export function registerAgentCommands(program: Command): void {
         try {
           herdr.promptAgent({
             target: pane.paneId,
-            text: buildTaskPrompt(row.id, opts.task),
+            text: buildTaskPrompt(row.id, opts.task, project),
             wait: opts.wait ?? false,
           });
         } catch (err) {
@@ -302,13 +302,30 @@ function parseIntOpt(value: string): number {
  * a short, self-contained reporting contract (full version in LEDGER.md,
  * "For dispatched agents") — so an agent never needs to read LEDGER.md
  * itself to know how to report back.
+ *
+ * The delivery step (branch + PR vs. just a branch) is driven entirely by
+ * `project.delivery_mode`, already core schema — but *how* a PR actually
+ * gets opened is deliberately left to the agent's own judgment/tooling
+ * (e.g. `tea` against a Forgejo remote), not something ledger orchestrates
+ * or needs to know about. See DECISIONS.md.
  */
-function buildTaskPrompt(agentId: number, task: string): string {
+function buildTaskPrompt(agentId: number, task: string, project: ProjectRow): string {
+  const deliveryInstructions =
+    project.delivery_mode === "direct-pr"
+      ? `Work on a new branch — never commit directly to '${project.default_branch}'.
+When you're done, open a pull request against '${project.default_branch}'
+(use whatever tooling is available for this project's remote, e.g. \`tea\`
+for a Forgejo remote). Then run this as your last step:
+  ledger agent update ${agentId} --status done --outcome '<pr-url>'
+using the PR's URL.`
+      : `Work on a new branch — never commit directly to '${project.default_branch}'.
+When you're done, run this as your last step:
+  ledger agent update ${agentId} --status done --outcome '<branch-name-or-report-path>'`;
+
   return `${task}
 
 ---
-When you're done, run this as your last step:
-  ledger agent update ${agentId} --status done --outcome '<pr-url-or-branch-or-report-path>'
+${deliveryInstructions}
 
 If you get stuck and need a decision before you can continue: just state the
 question and stop where you are. herdr detects that as "blocked" automatically
