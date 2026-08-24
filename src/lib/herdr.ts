@@ -113,6 +113,34 @@ export function closeWorkspace(workspaceId: string): void {
   runHerdr(["workspace", "close", workspaceId]);
 }
 
+export interface HerdrWorkspaceInfo {
+  workspace_id: string;
+  label: string;
+}
+
+/**
+ * Fetches a workspace's info (including its label). Throws HerdrError
+ * (e.g. `workspace_not_found`) when the id doesn't exist. Pass `quiet`
+ * when a missing workspace is an expected, handled outcome (same rationale
+ * as `workspaceExists`): it suppresses herdr's raw error envelope being
+ * echoed to the terminal, while `throwHerdrFailure` still parses it from
+ * the piped stderr.
+ */
+export function getWorkspace(
+  workspaceId: string,
+  opts?: { quiet?: boolean },
+): HerdrWorkspaceInfo {
+  const result = runHerdr<{ type: string; workspace: HerdrWorkspaceInfo }>(
+    ["workspace", "get", workspaceId],
+    opts,
+  );
+  return result.workspace;
+}
+
+export function renameWorkspace(workspaceId: string, label: string): void {
+  runHerdr(["workspace", "rename", workspaceId, label]);
+}
+
 /** True if `workspaceId` still exists (wasn't closed, e.g. by the user). */
 export function workspaceExists(workspaceId: string): boolean {
   try {
