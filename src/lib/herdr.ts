@@ -76,6 +76,19 @@ function runHerdrAction(args: string[]): void {
   }
 }
 
+/**
+ * Like `runHerdr`, but for `pane read`, which (confirmed live) returns the
+ * pane's raw rendered terminal text on stdout, not herdr's usual JSON
+ * envelope.
+ */
+function runHerdrText(args: string[]): string {
+  try {
+    return execFileSync("herdr", args, { encoding: "utf8" });
+  } catch (err) {
+    throwHerdrFailure(args, err);
+  }
+}
+
 function tryParseEnvelope<T>(text: string): HerdrEnvelope<T> | undefined {
   try {
     return JSON.parse(text.trim()) as HerdrEnvelope<T>;
@@ -193,9 +206,72 @@ export function renameTab(tabId: string, label: string): void {
 
 const AGENT_START_READY_RETRY_BUDGET_MS = 10_000;
 const AGENT_START_READY_RETRY_INTERVAL_MS = 300;
+const CLAUDE_TRUST_DIALOG_KEY_SETTLE_MS = 300;
+const CLAUDE_TRUST_DIALOG_READY_TIMEOUT_MS = 15_000;
+
+// Text markers from Claude Code's one-time "do you trust this folder?"
+// dialog, confirmed live off a real `herdr pane read --format text` (see
+// DECISIONS.md). Matched literally, not as a prefix/suffix regex, since
+// the surrounding box-drawing/whitespace varies but this wording doesn't.
+const CLAUDE_TRUST_OPTION_TEXT = "Yes, I trust this folder";
+const CLAUDE_DECLINE_OPTION_TEXT = "No, exit";
 
 export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function readPaneText(paneId: string): string {
+  return runHerdrText(["pane", "read", paneId, "--format", "text"]);
+}
+
+function looksLikeClaudeTrustDialog(paneText: string): boolean {
+  return (
+    paneText.includes(CLAUDE_TRUST_OPTION_TEXT) &&
+    paneText.includes(CLAUDE_DECLINE_OPTION_TEXT)
+  );
+}
+
+/** True if the pane's rendered text shows the "trust" option as the currently-highlighted (❯) one. */
+function isTrustOptionHighlighted(paneText: string): boolean {
+  return paneText
+    .split("\n")
+    .some((line) => /^❯\s*/.test(line.trim()) && line.includes(CLAUDE_TRUST_OPTION_TEXT));
+}
+
+/**
+ * Dismisses Claude Code's one-time "do you trust this folder?" dialog,
+ * choosing "Yes, I trust this folder" specifically — confirmed live (see
+ * DECISIONS.md) that the dialog's default-highlighted option is NOT
+ * reliable: one real run defaulted to "Yes, I trust this folder", another
+ * (same Claude Code version) defaulted to "No, exit". A blind Enter risks
+ * declining trust instead of accepting it, so this reads the pane's actual
+ * rendered text first and only sends keys once it recognizes exactly what's
+ * on screen — an unrecognized stuck state fails loud instead of guessing.
+ */
+function dismissClaudeTrustDialog(paneId: string): void {
+  const text = readPaneText(paneId);
+  if (!looksLikeClaudeTrustDialog(text)) {
+    throw new Error(
+      `herdr reported the agent on pane ${paneId} as not ready, but its screen ` +
+        `doesn't show Claude Code's known "trust this folder?" dialog — refusing ` +
+        `to send keystrokes to an unrecognized stuck state. Pane text:\n${text}`,
+    );
+  }
+
+  if (!isTrustOptionHighlighted(text)) {
+    sendKeys(paneId, "down");
+    sleepSync(CLAUDE_TRUST_DIALOG_KEY_SETTLE_MS);
+    const afterDown = readPaneText(paneId);
+    if (!isTrustOptionHighlighted(afterDown)) {
+      throw new Error(
+        `sent Down to move the Claude Code trust dialog's selection to ` +
+          `"${CLAUDE_TRUST_OPTION_TEXT}" on pane ${paneId}, but it still isn't ` +
+          `highlighted — refusing to guess further. Pane text:\n${afterDown}`,
+      );
+    }
+  }
+
+  sendKeys(paneId, "enter");
 }
 
 /**
@@ -209,6 +285,19 @@ export function sleepSync(ms: number): void {
  * testing. What actually resolves it is real elapsed wall-clock time, so
  * retry specifically on `agent_pane_busy` with a short synchronous
  * backoff; any other error fails immediately, not retried.
+ *
+ * For `kind: "claude"`, a second real blocker (confirmed live, see
+ * DECISIONS.md): Claude Code's one-time "do you trust this folder?" dialog
+ * blocks herdr's own readiness detection, so `agent start` throws
+ * `agent_not_ready` while it's showing — success never comes for it to be
+ * dismissed after the fact. On that specific error, dismiss the dialog
+ * directly (see `dismissClaudeTrustDialog`) and then wait for readiness via
+ * `agent wait` on the *pane*, not by re-invoking `agent start` with the
+ * same name: once herdr has detected and named the agent on this pane
+ * (which happens even though the first `agent start` call threw), a second
+ * `agent start` call fails with `agent_name_taken` — confirmed live, even
+ * though the error payload's own `status` field shows the agent as Idle
+ * (ready) at that point.
  */
 export function startAgent(opts: {
   name: string;
@@ -229,8 +318,34 @@ export function startAgent(opts: {
       return;
     } catch (err) {
       const isPaneBusy = err instanceof HerdrError && err.code === "agent_pane_busy";
-      if (!isPaneBusy || Date.now() >= deadline) throw err;
-      sleepSync(AGENT_START_READY_RETRY_INTERVAL_MS);
+      if (isPaneBusy && Date.now() < deadline) {
+        sleepSync(AGENT_START_READY_RETRY_INTERVAL_MS);
+        continue;
+      }
+
+      const isNotReady = err instanceof HerdrError && err.code === "agent_not_ready";
+      if (opts.kind === "claude" && isNotReady) {
+        dismissClaudeTrustDialog(opts.pane);
+        // --until idle specifically: confirmed live, right after dismissal
+        // Claude Code passes through a transient "blocked" status before
+        // settling into "idle" — `agent wait`'s default (idle/done/blocked)
+        // matches that transient blocked state and returns too early, so a
+        // caller that then immediately prompts the agent hits herdr's own
+        // agent_blocked error. Only "idle" actually means ready for prompts
+        // here.
+        runHerdr([
+          "agent",
+          "wait",
+          opts.pane,
+          "--until",
+          "idle",
+          "--timeout",
+          String(CLAUDE_TRUST_DIALOG_READY_TIMEOUT_MS),
+        ]);
+        return;
+      }
+
+      throw err;
     }
   }
 }

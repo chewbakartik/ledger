@@ -906,3 +906,62 @@ rejected on *staleness*, not on expressiveness:
 Consequences: priority is order, never readiness — the CLI does not
 auto-unblock or otherwise act on it; and a wrong/stale value is a
 cosmetic bug with an obvious symptom, by design.
+
+---
+
+## Fixed: claude dispatch never actually dismissed the trust dialog — 2026-09-01
+
+The earlier "send Enter after start, accepts the dialog's default" fix
+(see "Claude agents dispatch in bypass-permissions mode, not auto" above)
+was wrong on two counts, both confirmed live against real treehouse
+worktrees (not simulated):
+
+1. **`herdr agent start` never returns success while the dialog is up, so
+   the post-hoc Enter never had a chance to run.** Claude Code's "do you
+   trust this folder?" dialog blocks herdr's own readiness detection, so
+   `agent start` throws `agent_not_ready` while it's showing — the old
+   code's `herdr.startAgent(...)` call itself threw before dispatch ever
+   reached the `if (kind === "claude") { sleepSync(300); sendKeys(...,
+   "enter") }` block that was supposed to dismiss it. The original
+   verification for that fix apparently landed on an already-trusted
+   worktree slot (trust persists per-path in `~/.claude.json`), so the
+   dialog never actually appeared and the gap went unnoticed.
+2. **Even reached, a blind Enter is not safe.** The dialog's
+   default-highlighted option is NOT reliably "Yes, I trust this folder" —
+   one live run defaulted to it, another (same Claude Code version)
+   defaulted to "No, exit". A blind Enter risks declining trust and
+   exiting Claude Code instead of accepting it.
+
+Fixed in `herdr.ts`'s `startAgent`: on `agent_not_ready` for `kind ===
+"claude"` specifically, read the pane's actual rendered text (`herdr pane
+read <pane> --format text`) and confirm it's really showing the known
+dialog (`"Yes, I trust this folder"` + `"No, exit"` both present) before
+touching it at all — an unrecognized stuck state throws instead of
+guessing. If "Yes, I trust this folder" isn't already the highlighted
+(`❯`) option, send Down once, re-read, and confirm the highlight actually
+moved before sending Enter — never send Enter on faith that Down worked.
+
+A third thing, found while fixing the above: once the dialog is dismissed
+this way, **re-invoking `herdr agent start <same-name> --kind claude
+--pane <same-pane>` does not work** — it fails with `agent_name_taken`,
+even though the error payload's own `status` field shows the agent as
+Idle (ready) at that point. herdr had already detected and named the
+agent against this pane on the first (throwing) call. Fixed by waiting
+for readiness via `herdr agent wait <pane> --until idle` instead — targets
+a pane directly rather than re-invoking `agent start`. `--until idle`
+specifically, not `agent wait`'s default (`idle`/`done`/`blocked`):
+confirmed live that right after dismissal the agent passes through a
+transient `blocked` status before settling into `idle`, and the default
+matched that transient state and returned too early — a caller that then
+immediately prompted the agent hit herdr's own `agent_blocked` error.
+
+Verified live end-to-end against three successive genuinely-fresh
+treehouse worktrees (fresh scratch projects, so each worktree path was
+one Claude Code had never seen — trust doesn't carry over): the first
+confirmed the bug (`agent_not_ready`, both live runs showing different
+default-highlighted options as described above); the second caught the
+`--until idle` gap (dispatch "succeeded" but the immediate `agent prompt`
+call then hit `agent_blocked`); the third, after that fix, dispatched
+cleanly start-to-finish — no `agent_not_ready`/`agent_name_taken` surfaced
+as a failure, the agent went `working` on the real task text, and finished
+`done` on its own.

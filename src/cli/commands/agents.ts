@@ -126,26 +126,19 @@ export function registerAgentCommands(program: Command): void {
         let pane: DispatchPane | undefined;
         try {
           pane = openDispatchPane(project, worktreePath, label);
+          // For kind === "claude", herdr.startAgent itself detects and
+          // dismisses Claude Code's one-time "do you trust this folder?"
+          // dialog when it blocks readiness (see its docstring in
+          // herdr.ts and DECISIONS.md) — a blind post-hoc Enter here
+          // cannot work, since `startAgent` only returns successfully
+          // once the agent is actually ready, and that success never
+          // comes while the dialog is still up.
           herdr.startAgent({
             name: label,
             kind,
             pane: pane.paneId,
             ...(kind === "claude" ? { extraArgs: CLAUDE_BYPASS_ARGS } : {}),
           });
-          if (kind === "claude") {
-            // Claude Code shows a one-time "do you trust this folder?"
-            // dialog for any directory it hasn't seen before — which every
-            // treehouse worktree is, from its point of view — and neither
-            // --permission-mode bypassPermissions nor
-            // --dangerously-skip-permissions skips it (confirmed live, see
-            // DECISIONS.md). Nobody is present in a dispatched pane to
-            // answer it, so it would hang forever otherwise. Dismissing
-            // with Enter accepts the default ("1. Yes, I trust this
-            // folder"); confirmed harmless as a no-op when the directory
-            // was already trusted (a reused treehouse worktree slot).
-            herdr.sleepSync(300);
-            herdr.sendKeys(pane.paneId, "enter");
-          }
         } catch (err) {
           // Best-effort cleanup: don't leave a dangling herdr pane pointed
           // at a worktree that's already back in the treehouse pool, and
