@@ -31,7 +31,7 @@ function throwHerdrFailure(args: string[], err: unknown): never {
       throw new HerdrError(parsed.error.code, parsed.error.message);
     }
   }
-  throw new Error(`herdr ${args.join(" ")} failed: ${e.stderr ?? e.message}`);
+  throw new Error(`herdr ${args.join(" ")} failed: ${(e.stderr ?? e.message).trim()}`);
 }
 
 function runHerdr<T>(args: string[], opts?: { quiet?: boolean }): T {
@@ -81,9 +81,16 @@ function runHerdrAction(args: string[]): void {
  * pane's raw rendered terminal text on stdout, not herdr's usual JSON
  * envelope.
  */
-function runHerdrText(args: string[]): string {
+function runHerdrText(args: string[], opts?: { quiet?: boolean }): string {
   try {
-    return execFileSync("herdr", args, { encoding: "utf8" });
+    return execFileSync("herdr", args, {
+      encoding: "utf8",
+      // execFileSync leaks stderr straight to the parent's terminal by
+      // default even though it's also captured for throwHerdrFailure to
+      // parse (confirmed live) — same rationale as runHerdr's `quiet`:
+      // pass it when a failure is routine/handled, not worth echoing raw.
+      ...(opts?.quiet ? { stdio: ["ignore", "pipe", "pipe"] } : {}),
+    });
   } catch (err) {
     throwHerdrFailure(args, err);
   }
@@ -220,8 +227,35 @@ export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+export type HerdrPaneReadSource = "visible" | "recent" | "recent-unwrapped" | "detection";
+
+export interface ReadPaneOptions {
+  /** Terminal snapshot source (herdr default: recent). */
+  source?: HerdrPaneReadSource;
+  /** Tail line count; omitted means herdr's own default (the full snapshot). */
+  lines?: number;
+  /** Suppress herdr's raw stderr on failure (see `runHerdr`'s `quiet`) — pass this when a failed read is routine/handled, not worth echoing raw. */
+  quiet?: boolean;
+}
+
+/**
+ * Reads a pane's rendered terminal text — the general-purpose entry point
+ * (catch-up's idle-agent pane tails; anything else that needs to look at
+ * what a pane last showed). Throws HerdrError (e.g. `pane_not_found`) for a
+ * gone pane, or a generic Error for something more fundamental (socket
+ * unreachable) — callers that need to tell those apart use `instanceof
+ * HerdrError`, same as every other herdr-client call in this file.
+ */
+export function readPane(paneId: string, opts?: ReadPaneOptions): string {
+  const args = ["pane", "read", paneId, "--source", opts?.source ?? "recent", "--format", "text"];
+  if (opts?.lines !== undefined) {
+    args.push("--lines", String(opts.lines));
+  }
+  return runHerdrText(args, opts?.quiet !== undefined ? { quiet: opts.quiet } : undefined);
+}
+
 function readPaneText(paneId: string): string {
-  return runHerdrText(["pane", "read", paneId, "--format", "text"]);
+  return readPane(paneId);
 }
 
 function looksLikeClaudeTrustDialog(paneText: string): boolean {

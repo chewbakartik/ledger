@@ -121,22 +121,38 @@ the code.
   approval — a gate must not be editable by the party it binds.
 
 **Liveness (A8, clerk side).** At catch-up, an `idle` agent with
-unfinished work is suspect — it may have died on a usage limit. Check the
-pane's last output for a usage error before assuming it's fine; record
-what you find and tell the user.
+unfinished work is suspect — it may have died on a usage limit. `catchup`
+now lists every `idle` agent together with the tail of its pane's recent
+output (see below) — that's the mechanical part: it puts what the agent
+last showed in front of you without a separate pane read. The judgment
+(is that tail a real question, a usage error, or nothing wrong at all —
+and whether to answer, re-dispatch, or escalate) is still yours.
 
 ### Session start: catch up in one command
 
 ```sh
-ledger catchup [--project <name>] [--json]
+ledger catchup [--project <name>] [--idle-pane-lines <n>] [--json]
 ```
 
 Returns, in one call: agents currently `blocked` (need a decision now),
-every `events` row since the last time any clerk ran `catchup` (tracked in
-`first_clerk.last_seen`), and every roadmap item not yet `done`/`dropped`,
-ordered by priority `high → normal → low` (ties by id).
+every agent currently `idle` together with the tail of its pane's recent
+output (A8 liveness triage — did it ask a question, hit a usage error, or
+go quiet mid-task?), every `events` row since the last time any clerk ran
+`catchup` (tracked in `first_clerk.last_seen`), and every roadmap item not
+yet `done`/`dropped`, ordered by priority `high → normal → low` (ties by
+id).
 This is the entire "what's going on" operation from `DESIGN.md` — read this
 instead of any prose file, every session.
+
+`--idle-pane-lines <n>` controls how much of each idle agent's pane tail is
+shown (default 25; `0` skips pane reads entirely — just the idle-agent list).
+A pane read failing (pane/tab closed, herdr socket down) never fails
+`catchup` itself: a single dead pane prints `pane unreadable: <reason>`
+under that agent and the rest of catch-up proceeds; a herdr socket that's
+unreachable entirely prints one note for the whole section instead of
+repeating the same failure under every idle agent. `--json` includes the
+same data as an `idle` array (`agent`, `pane_tail`, `pane_read_error`) plus
+top-level `idle_pane_read_note` for the whole-socket case.
 
 ### First-clerk claiming
 
@@ -332,6 +348,14 @@ completed/abandoned agent's worktree.
    sit on a blocked agent hoping it resolves itself; that's exactly the
    state `ledger catchup` exists to make visible immediately instead of
    burying it in a pane you'd otherwise have to remember to check.
+
+`ledger catchup` also surfaces every `idle` agent, each with a tail of its
+pane's recent output (A8). An idle agent isn't blocked — herdr didn't detect
+it waiting on a question — but with unfinished work it's still suspect: read
+the tail before assuming it's fine. A real usage-limit error or a stalled
+run looks different from ordinary quiet-between-turns output; judge which
+one you're looking at, same as you would from reading the pane directly,
+just without the extra step of going to find the pane first.
 
 ## Safe ways to extend this
 

@@ -853,6 +853,17 @@ finds "unprovable" and every release is a coin flip.
 (ledger-notify candidate); the clerk-side rule is soft: at catch-up, an
 `idle` agent with unfinished work is suspect — check its pane's last output
 for a usage error before assuming it's fine.
+Mechanical support landed (roadmap item 21, 2026-09-02): `ledger catchup`
+now lists every `idle` agent with a tail of its pane's recent output
+(`readPane` in `src/lib/herdr.ts`, `--idle-pane-lines`, default 25 —
+0 disables it) instead of a bare `state_change` line, so the check no
+longer requires going to read the pane by hand. The gate itself is unchanged and still soft: catch-up now surfaces the
+tail mechanically, but the judgment — is this a real usage error, a
+question, or nothing wrong; answer, re-dispatch, or escalate — is still
+the clerk's, not automated. A
+pane read failing is never treated as evidence either way (C7): a dead
+pane or unreachable herdr socket prints a marker/note and catch-up
+proceeds, it never fails or fabricates a status from a failed read.
 
 ### Implementation status
 
