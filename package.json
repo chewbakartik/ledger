@@ -1,16 +1,23 @@
 {
-  "name": "ledger",
-  "version": "0.1.0-alpha.8",
+  "name": "@devwithdavid/ledger",
+  "version": "0.1.0",
   "description": "Personal agent-orchestration ledger: SQLite state store, CLI, and herdr watcher plugin.",
   "private": true,
   "type": "module",
   "bin": {
     "ledger": "dist/cli/index.js"
   },
+  "files": [
+    "dist",
+    "LEDGER.md",
+    "README.md",
+    "herdr-plugin.toml"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch",
-    "dev": "tsc -p tsconfig.json && node dist/cli/index.js"
+    "dev": "tsc -p tsconfig.json && node dist/cli/index.js",
+    "prepare": "tsc -p tsconfig.json"
   },
   "engines": {
     "node": ">=20"
