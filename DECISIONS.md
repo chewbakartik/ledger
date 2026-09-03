@@ -1043,3 +1043,46 @@ prebuild.
   parameter binding maps 1:1 (the codebase uses only positional
   parameters, no named `:foo`/`$foo`/`@foo` binds, so nothing there
   needed porting).
+
+## Clerk claim liveness: activity-based staleness, not claimed_at-only — 2026-09-03, user-directed
+
+**Finding:** `first_clerk` staleness (`isStale()` in
+`src/cli/commands/clerk.ts`) compared `now` against `claimed_at` alone.
+A clerk session that claimed early and is still genuinely active past
+the 12h `STALE_AFTER_HOURS` threshold looked identical to one that
+claimed and then died — either could be displaced by an unforced
+`clerk claim` from a second session, even though the first was live.
+`last_seen` existed on the row but was only ever written by the
+`catchup` command, so it wasn't a reliable liveness signal on its own.
+
+**Decision (user, 2026-09-03; the "robust" option):**
+
+- **`isStale()` now compares `now` against the LATEST of `claimed_at`
+  and `last_seen`**, falling back to `claimed_at` when `last_seen` is
+  NULL (what a fresh claim's upsert sets — kept as-is, so a fresh claim
+  still starts a clean clock). Threshold stays 12h, unchanged.
+- **Heartbeat: every CLI invocation that opens the store bumps
+  `first_clerk.last_seen = datetime('now')`** (`touchClerkHeartbeat()`
+  in `src/db/client.ts`), so staleness now tracks real activity across
+  *any* `ledger` command, not just `catchup`. It's called from
+  `src/cli/index.ts`, once, **after** the invoked command's own logic
+  has finished — not from inside `getDb()`. `clerk claim` reads
+  `first_clerk` to decide staleness before doing anything else; a
+  heartbeat firing on that same `getDb()` call would stamp
+  `last_seen = now` on the very row being checked and erase the
+  staleness it exists to detect. Running it after the command body
+  avoids that.
+- **Never fails the command.** A heartbeat write is wrapped so any
+  error only warns to stderr; it's a no-op when the store was never
+  opened this invocation (e.g. `--help`) or there's no `first_clerk`
+  row yet.
+- **`clerk claim`'s own NULL reset wins over the generic heartbeat**,
+  for the same reason: its upsert explicitly sets `last_seen = NULL` on
+  every claim (fresh or `--force`) so the new claim starts a clean
+  clock; if the post-command heartbeat then immediately overwrote that
+  NULL with `now` within the same invocation, "fresh claim" and
+  "claimed N hours ago, seen once since" would become indistinguishable.
+  `clerk claim` calls `suppressNextClerkHeartbeat()` right after its
+  upsert so this invocation's heartbeat is a one-shot no-op.
+- `catchup`'s existing `last_seen` write is kept as belt-and-braces,
+  not the only source anymore.

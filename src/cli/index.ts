@@ -9,6 +9,7 @@ import { registerDocsCommand } from "./commands/docs.js";
 import { registerEventCommands } from "./commands/events.js";
 import { registerProjectCommands } from "./commands/projects.js";
 import { registerRoadmapCommands } from "./commands/roadmap.js";
+import { touchClerkHeartbeat } from "../db/client.js";
 
 const program = new Command();
 program
@@ -31,7 +32,11 @@ program.exitOverride();
 
 try {
   await program.parseAsync(process.argv);
+  // Item 27: heartbeat after the command has run its own logic — see
+  // touchClerkHeartbeat's doc comment for why it can't live in getDb().
+  touchClerkHeartbeat();
 } catch (err) {
+  touchClerkHeartbeat();
   if ((err as { code?: string }).code?.startsWith("commander.")) {
     process.exit((err as { exitCode?: number }).exitCode ?? 1);
   }

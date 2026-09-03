@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { getDb } from "../../db/client.js";
+import { getDb, suppressNextClerkHeartbeat } from "../../db/client.js";
 import type { FirstClerkRow } from "../../db/types.js";
 import * as herdr from "../../lib/herdr.js";
 import { printJson } from "../format.js";
@@ -45,6 +45,11 @@ export function registerClerkCommands(program: Command): void {
         )
         .get(opts.sessionId, opts.herdrPane) as unknown as FirstClerkRow;
 
+      // The upsert above just reset last_seen to NULL (fresh clock) —
+      // don't let the generic post-command heartbeat (src/cli/index.ts)
+      // immediately overwrite that within this same invocation.
+      suppressNextClerkHeartbeat();
+
       // The claim is durable now; the rename below is cosmetic only.
       renameClaimantWorkspace(opts.herdrPane);
 
@@ -62,9 +67,21 @@ export function registerClerkCommands(program: Command): void {
     });
 }
 
+/**
+ * Item 27 (2026-09-03, user-directed "robust" option): staleness reflects
+ * actual activity, not just how long ago the claim was made. A clerk
+ * session that's still working past 12h shouldn't be displaceable just
+ * because it claimed early — so this compares now against the LATEST of
+ * claimed_at and last_seen, falling back to claimed_at when last_seen is
+ * NULL (what a fresh claim sets — see the upsert above). last_seen is
+ * kept current by the heartbeat in src/cli/index.ts (touchClerkHeartbeat)
+ * and, belt-and-braces, by catchup's own write.
+ */
 function isStale(row: FirstClerkRow): boolean {
   const claimedAt = new Date(row.claimed_at + "Z").getTime();
-  const ageHours = (Date.now() - claimedAt) / (1000 * 60 * 60);
+  const lastSeen = row.last_seen ? new Date(row.last_seen + "Z").getTime() : claimedAt;
+  const lastActivity = Math.max(claimedAt, lastSeen);
+  const ageHours = (Date.now() - lastActivity) / (1000 * 60 * 60);
   return ageHours > STALE_AFTER_HOURS;
 }
 
