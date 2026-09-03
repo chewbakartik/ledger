@@ -994,3 +994,52 @@ call then hit `agent_blocked`); the third, after that fix, dispatched
 cleanly start-to-finish — no `agent_not_ready`/`agent_name_taken` surfaced
 as a failure, the agent went `working` on the real task text, and finished
 `done` on its own.
+
+## Storage driver: `better-sqlite3` → `node:sqlite` — 2026-09-03, user-directed
+
+**Supersedes the "SQLite binding" decision above.** That earlier call
+picked `better-sqlite3` specifically *because* `node:sqlite` was
+experimental; the tradeoff flips once the dependency's own install cost
+becomes the live problem.
+
+**The decision: drop `better-sqlite3`, use Node's built-in `node:sqlite`
+(`DatabaseSync`).** Item 25 found `better-sqlite3`'s native build fails on
+platforms without prebuilt binaries for the running Node ABI (e.g.
+Alpine/musl) — a `postinstall` compile step (`node-gyp`) that needs a C
+toolchain present, which a plain `npm install` on such a host doesn't
+have. For a CLI meant to `npm install -g` painlessly on whatever machine
+the user is on that day, that install friction outweighs
+`better-sqlite3`'s maturity. `node:sqlite` ships in the Node binary
+itself: zero native compilation, zero dependency to audit or fail to
+prebuild.
+
+- **Minimum Node: 22.13.0.** `node:sqlite` shipped unflagged (no
+  `--experimental-sqlite` needed) from Node 22.13.0 / 23.4.0; `engines`
+  and the README's Prerequisites now say `>=22.13.0` (was `>=20`,
+  set when `better-sqlite3` was the driver).
+- **Still experimental.** Node's own docs still mark `node:sqlite`
+  experimental — the API can change across Node versions in a way
+  `better-sqlite3`'s stable API wouldn't. Accepted: the install-friction
+  problem is real and present, the API-churn risk is speculative and
+  Node's SQLite bindings have been stable in practice since unflagging.
+  The module prints a one-time `ExperimentalWarning` on first load;
+  `ledger`'s CLI entry point filters that specific warning (by name and
+  message text) so routine use stays quiet, while every other Node
+  warning still reaches stderr unfiltered.
+- **File format and schema: unchanged.** Both drivers speak the same
+  on-disk SQLite file format and the same schema/migrations
+  (`src/db/migrations/`) — an existing `ledger.db` written by the
+  `better-sqlite3` build opens and reads/writes identically under
+  `node:sqlite`. No migration, export, or conversion step for existing
+  installs.
+- **API-shape differences absorbed entirely in `src/db/client.ts` and
+  its call sites**, not in the schema or CLI surface: `node:sqlite`'s
+  `DatabaseSync` has no `.pragma()` (pragmas now go through `.exec()`)
+  and no `.transaction()` helper (migrations now drive
+  `BEGIN`/`COMMIT`/`ROLLBACK` via `.exec()` explicitly); `.get()` misses
+  return `undefined` rather than `null` (the codebase already typed
+  every optional `.get()` result as `T | undefined`, so this needed no
+  behavior change, only stricter TS casts at call sites); anonymous `?`
+  parameter binding maps 1:1 (the codebase uses only positional
+  parameters, no named `:foo`/`$foo`/`@foo` binds, so nothing there
+  needed porting).

@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Must come first — see the comment in suppress-experimental-warnings.ts.
+import "./suppress-experimental-warnings.js";
 import { Command } from "commander";
 import { registerAgentCommands } from "./commands/agents.js";
 import { registerCatchupCommand } from "./commands/catchup.js";

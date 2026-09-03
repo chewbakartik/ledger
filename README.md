@@ -13,7 +13,8 @@ a general product.
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org) ≥ 20
+- [Node.js](https://nodejs.org) ≥ 22.13 (needed for the built-in
+  `node:sqlite` storage driver — see [`DECISIONS.md`](./DECISIONS.md))
 - [herdr](https://herdr.dev) installed and running — the terminal
   workspace/pane manager. `herdr status` should show a running server.
 - [treehouse](https://github.com/kunchenguid/treehouse) installed — isolated

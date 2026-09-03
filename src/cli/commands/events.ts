@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { EventRow } from "../../db/types.js";
 import { printJson, printTable } from "../format.js";
@@ -29,7 +30,7 @@ export function registerEventCommands(program: Command): void {
            VALUES (?, ?, ?)
            RETURNING *`,
         )
-        .get(opts.agent, opts.type, opts.payload ?? null) as EventRow;
+        .get(opts.agent, opts.type, opts.payload ?? null) as unknown as EventRow;
 
       printJson(row);
     });
@@ -42,7 +43,7 @@ export function registerEventCommands(program: Command): void {
     .option("--json", "output as JSON")
     .action((opts: { agent?: number; since?: string; json?: boolean }) => {
       let sql = "SELECT * FROM events WHERE 1=1";
-      const params: unknown[] = [];
+      const params: SQLInputValue[] = [];
 
       if (opts.agent !== undefined) {
         sql += " AND agent_id = ?";
@@ -54,7 +55,7 @@ export function registerEventCommands(program: Command): void {
       }
       sql += " ORDER BY created_at DESC, id DESC";
 
-      const rows = getDb().prepare(sql).all(...params) as EventRow[];
+      const rows = getDb().prepare(sql).all(...params) as unknown as EventRow[];
       if (opts.json) printJson(rows);
       else printTable(rows);
     });

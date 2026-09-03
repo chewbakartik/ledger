@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import { AUTHORIZATION_BASES, CODING_AGENT_KINDS } from "../../db/types.js";
 import type {
@@ -79,7 +80,9 @@ export function registerAgentCommands(program: Command): void {
         if (opts.roadmapItem !== undefined) {
           const item = db
             .prepare("SELECT id, project_id FROM roadmap WHERE id = ?")
-            .get(opts.roadmapItem) as { id: number; project_id: number } | undefined;
+            .get(opts.roadmapItem) as unknown as
+            | { id: number; project_id: number }
+            | undefined;
           if (!item) throw new Error(`no roadmap item #${opts.roadmapItem}`);
           if (item.project_id !== project.id) {
             throw new Error(
@@ -94,7 +97,7 @@ export function registerAgentCommands(program: Command): void {
               `SELECT id FROM agents
                WHERE roadmap_item_id = ? AND status IN ('working', 'blocked')`,
             )
-            .all(opts.roadmapItem) as { id: number }[];
+            .all(opts.roadmapItem) as unknown as { id: number }[];
           if (live.length > 0 && !opts.confirmDuplicate) {
             throw new Error(
               `roadmap item #${opts.roadmapItem} already has a live agent ` +
@@ -191,7 +194,7 @@ export function registerAgentCommands(program: Command): void {
             kind,
             authorization,
             opts.spawnedBy ?? null,
-          ) as AgentRow;
+          ) as unknown as AgentRow;
 
         db.prepare(
           `INSERT INTO events (agent_id, event_type, payload) VALUES (?, 'dispatched', ?)`,
@@ -227,7 +230,7 @@ export function registerAgentCommands(program: Command): void {
     .action((opts: { status?: string; project?: string; json?: boolean }) => {
       const db = getDb();
       let sql = "SELECT * FROM agents WHERE 1=1";
-      const params: unknown[] = [];
+      const params: SQLInputValue[] = [];
 
       if (opts.status) {
         assertValidStatus(opts.status);
@@ -241,7 +244,7 @@ export function registerAgentCommands(program: Command): void {
       }
       sql += " ORDER BY id DESC";
 
-      const rows = db.prepare(sql).all(...params) as AgentRow[];
+      const rows = db.prepare(sql).all(...params) as unknown as AgentRow[];
       if (opts.json) printJson(rows);
       else printTable(rows);
     });
@@ -274,7 +277,7 @@ export function registerAgentCommands(program: Command): void {
           opts.status ?? existing.status,
           opts.outcome ?? existing.outcome,
           Number(id),
-        ) as AgentRow;
+        ) as unknown as AgentRow;
 
       if (opts.status || opts.outcome) {
         db.prepare(
@@ -353,7 +356,7 @@ export function registerAgentCommands(program: Command): void {
 }
 
 export function getAgentById(id: number): AgentRow {
-  const row = getDb().prepare("SELECT * FROM agents WHERE id = ?").get(id) as
+  const row = getDb().prepare("SELECT * FROM agents WHERE id = ?").get(id) as unknown as
     | AgentRow
     | undefined;
   if (!row) throw new Error(`no agent #${id}`);

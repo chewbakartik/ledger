@@ -45,7 +45,7 @@ function main(): void {
     .prepare(
       "SELECT * FROM agents WHERE herdr_pane = ? ORDER BY id DESC LIMIT 1",
     )
-    .get(event.pane_id) as AgentRow | undefined;
+    .get(event.pane_id) as unknown as AgentRow | undefined;
 
   if (!agentRow) {
     // This pane isn't one ledger dispatched (e.g. the clerk's own pane).

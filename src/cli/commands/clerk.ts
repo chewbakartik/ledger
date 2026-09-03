@@ -22,7 +22,7 @@ export function registerClerkCommands(program: Command): void {
       const db = getDb();
       const existing = db
         .prepare("SELECT * FROM first_clerk WHERE id = 1")
-        .get() as FirstClerkRow | undefined;
+        .get() as unknown as FirstClerkRow | undefined;
 
       if (existing && !opts.force && !isStale(existing)) {
         throw new Error(
@@ -43,7 +43,7 @@ export function registerClerkCommands(program: Command): void {
              last_seen = NULL
            RETURNING *`,
         )
-        .get(opts.sessionId, opts.herdrPane) as FirstClerkRow;
+        .get(opts.sessionId, opts.herdrPane) as unknown as FirstClerkRow;
 
       // The claim is durable now; the rename below is cosmetic only.
       renameClaimantWorkspace(opts.herdrPane);
@@ -57,7 +57,7 @@ export function registerClerkCommands(program: Command): void {
     .action(() => {
       const row = getDb()
         .prepare("SELECT * FROM first_clerk WHERE id = 1")
-        .get() as FirstClerkRow | undefined;
+        .get() as unknown as FirstClerkRow | undefined;
       printJson(row ?? null);
     });
 }

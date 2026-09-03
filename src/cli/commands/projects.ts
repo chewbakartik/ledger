@@ -86,7 +86,7 @@ export function registerProjectCommands(program: Command): void {
         .prepare(
           `UPDATE projects SET repo_url = ?, delivery_mode = ? WHERE name = ? RETURNING *`,
         )
-        .get(repoUrl, deliveryMode, name) as ProjectRow;
+        .get(repoUrl, deliveryMode, name) as unknown as ProjectRow;
 
       printJson({
         ...row,
@@ -109,7 +109,7 @@ export function registerProjectCommands(program: Command): void {
     .action((opts: { json?: boolean }) => {
       const rows = getDb()
         .prepare("SELECT * FROM projects ORDER BY name")
-        .all() as ProjectRow[];
+        .all() as unknown as ProjectRow[];
       if (opts.json) printJson(rows);
       else printTable(rows);
     });
@@ -153,13 +153,13 @@ function insertProject(
        VALUES (?, ?, ?, ?, ?)
        RETURNING *`,
     )
-    .get(name, repoUrl, localClonePath, defaultBranch, deliveryMode) as ProjectRow;
+    .get(name, repoUrl, localClonePath, defaultBranch, deliveryMode) as unknown as ProjectRow;
 }
 
 export function getProjectByName(name: string): ProjectRow {
   const row = getDb()
     .prepare("SELECT * FROM projects WHERE name = ?")
-    .get(name) as ProjectRow | undefined;
+    .get(name) as unknown as ProjectRow | undefined;
   if (!row) throw new Error(`no project named "${name}"`);
   return row;
 }

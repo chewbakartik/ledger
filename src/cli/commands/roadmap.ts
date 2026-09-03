@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { RoadmapPriority, RoadmapRow, RoadmapStatus } from "../../db/types.js";
 import { ROADMAP_PRIORITIES } from "../../db/types.js";
@@ -50,7 +51,9 @@ export function registerRoadmapCommands(program: Command): void {
         if (opts.parent !== undefined) {
           const parent = db
             .prepare("SELECT id, project_id FROM roadmap WHERE id = ?")
-            .get(opts.parent) as { id: number; project_id: number } | undefined;
+            .get(opts.parent) as unknown as
+            | { id: number; project_id: number }
+            | undefined;
           if (!parent) throw new Error(`no roadmap item #${opts.parent}`);
           if (parent.project_id !== project.id) {
             throw new Error(
@@ -71,7 +74,7 @@ export function registerRoadmapCommands(program: Command): void {
             opts.title,
             opts.description ?? null,
             priority,
-          ) as RoadmapRow;
+          ) as unknown as RoadmapRow;
 
         printJson(row);
       },
@@ -90,7 +93,7 @@ export function registerRoadmapCommands(program: Command): void {
         const db = getDb();
 
         let sql = "SELECT * FROM roadmap WHERE project_id = ?";
-        const params: unknown[] = [project.id];
+        const params: SQLInputValue[] = [project.id];
 
         if (opts.status) {
           assertValidStatus(opts.status);
@@ -101,7 +104,7 @@ export function registerRoadmapCommands(program: Command): void {
         }
         sql += " ORDER BY parent_id IS NOT NULL, id";
 
-        const rows = db.prepare(sql).all(...params) as RoadmapRow[];
+        const rows = db.prepare(sql).all(...params) as unknown as RoadmapRow[];
         if (opts.json) printJson(rows);
         else printTable(rows);
       },
@@ -121,7 +124,7 @@ export function registerRoadmapCommands(program: Command): void {
         const db = getDb();
         const existing = db
           .prepare("SELECT * FROM roadmap WHERE id = ?")
-          .get(Number(id)) as RoadmapRow | undefined;
+          .get(Number(id)) as unknown as RoadmapRow | undefined;
         if (!existing) throw new Error(`no roadmap item #${id}`);
 
         const row = db
@@ -137,7 +140,7 @@ export function registerRoadmapCommands(program: Command): void {
             opts.description ?? existing.description,
             opts.priority ?? existing.priority,
             Number(id),
-          ) as RoadmapRow;
+          ) as unknown as RoadmapRow;
 
         printJson(row);
       },

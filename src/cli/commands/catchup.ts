@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow } from "../../db/types.js";
 import { HerdrError, readPane } from "../../lib/herdr.js";
@@ -101,28 +102,28 @@ export function registerCatchupCommand(program: Command): void {
 
       const firstClerk = db
         .prepare("SELECT * FROM first_clerk WHERE id = 1")
-        .get() as FirstClerkRow | undefined;
+        .get() as unknown as FirstClerkRow | undefined;
       const since = firstClerk?.last_seen ?? firstClerk?.claimed_at ?? null;
 
       let blockedSql = "SELECT * FROM agents WHERE status = 'blocked'";
-      const blockedParams: unknown[] = [];
+      const blockedParams: SQLInputValue[] = [];
       if (project) {
         blockedSql += " AND project_id = ?";
         blockedParams.push(project.id);
       }
-      const blocked = db.prepare(blockedSql).all(...blockedParams) as AgentRow[];
+      const blocked = db.prepare(blockedSql).all(...blockedParams) as unknown as AgentRow[];
 
       // A8 (DECISIONS.md): an idle agent with unfinished work is suspect —
       // it may have died on a usage limit. Surface every idle agent plus
       // the tail of what it last showed, so that check doesn't require
       // going to read the pane by hand.
       let idleSql = "SELECT * FROM agents WHERE status = 'idle'";
-      const idleParams: unknown[] = [];
+      const idleParams: SQLInputValue[] = [];
       if (project) {
         idleSql += " AND project_id = ?";
         idleParams.push(project.id);
       }
-      const idleAgents = db.prepare(idleSql).all(...idleParams) as AgentRow[];
+      const idleAgents = db.prepare(idleSql).all(...idleParams) as unknown as AgentRow[];
       const { entries: idle, globalNote: idlePaneGlobalNote } =
         opts.idlePaneLines > 0
           ? readIdlePanes(idleAgents, opts.idlePaneLines)
@@ -138,19 +139,19 @@ export function registerCatchupCommand(program: Command): void {
       let events: EventRow[] = [];
       if (since) {
         let eventsSql = "SELECT * FROM events WHERE created_at > ?";
-        const eventsParams: unknown[] = [since];
+        const eventsParams: SQLInputValue[] = [since];
         if (project) {
           eventsSql +=
             " AND agent_id IN (SELECT id FROM agents WHERE project_id = ?)";
           eventsParams.push(project.id);
         }
         eventsSql += " ORDER BY created_at";
-        events = db.prepare(eventsSql).all(...eventsParams) as EventRow[];
+        events = db.prepare(eventsSql).all(...eventsParams) as unknown as EventRow[];
       }
 
       let roadmapSql =
         "SELECT * FROM roadmap WHERE status NOT IN ('done', 'dropped')";
-      const roadmapParams: unknown[] = [];
+      const roadmapParams: SQLInputValue[] = [];
       if (project) {
         roadmapSql += " AND project_id = ?";
         roadmapParams.push(project.id);
@@ -160,7 +161,7 @@ export function registerCatchupCommand(program: Command): void {
       // this list (visible here) without blocking anything.
       roadmapSql +=
         " ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, id";
-      const roadmap = db.prepare(roadmapSql).all(...roadmapParams) as RoadmapRow[];
+      const roadmap = db.prepare(roadmapSql).all(...roadmapParams) as unknown as RoadmapRow[];
 
       if (firstClerk) {
         db.prepare(

@@ -1,6 +1,6 @@
 {
   "name": "@devwithdavid/ledger",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Personal agent-orchestration ledger: SQLite state store, CLI, and herdr watcher plugin.",
   "type": "module",
   "bin": {
@@ -19,14 +19,12 @@
     "prepare": "tsc -p tsconfig.json"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
     "commander": "^12.1.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.2",
     "typescript": "^5.7.2"
   }
