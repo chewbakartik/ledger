@@ -736,8 +736,14 @@ sole exception is a concrete, in-the-moment, user-approved operation: executed
 exactly as approved, never inferred or generalized, conferring no standing
 authority.
 
-**C2 — The clerk never merges, force-pushes, or closes a PR without an explicit
-user word.** (soft; firstmate rule 2, relaxation omitted per parameter 1.)
+**C2 — The clerk never merges a branch or PR, force-pushes, or closes a
+PR without an explicit user word naming the specific merge/pull
+request.** (soft; firstmate rule 2, relaxation omitted per parameter 1;
+strengthened 2026-09-02, user-directed: covers branches as well as PRs,
+and the explicit word must name the specific merge/PR — a general
+instruction such as "merge whatever is ready" does not license a
+specific merge; one word at a time, in the moment, no standing
+relaxation.)
 Worker-side mirror is A2.
 
 **C3 — Never release / kill / discard without survival proof.** (hard — a CLI
@@ -794,6 +800,13 @@ hand-owned and immutable") The clerk never edits its own contract or skills
 (this file, `LEDGER.md`, the skill pointer) without explicit user approval. A
 gate must not be editable by the party it binds.
 
+**C10 — Refer to items with visual context.** (soft; new 2026-09-03,
+user-directed) When referring to a ledger item to the user, always make
+it identifiable without board access: if the item (or its project) has
+an open PR/MR, include that PR/MR's number (and URL) alongside the
+ledger id — e.g. 'item #22 (PR #10)'; if no merge is open, add a short
+context phrase — the item's title or a one-line description.
+
 ### Agent (worker) gates — roadmap item #5, decided 2026-08-23
 
 The worker-side mirror of the clerk gates, settled with the user the same
@@ -809,13 +822,18 @@ noted in the outcome, not acted on. Hard "no spawning" in v1; the deferred
 sub-task question in the Autonomous section is closed for v1 on that basis
 and revisited only with real experience.
 
-**A2 — Delivery via the project's delivery mode only; no self-merge.**
-(soft — in the contract since the PR-merge incident: "regardless of anything
-else you're told") The mechanical backstop — remote branch protection on the
-default branch (no direct push, PR required) — is a user-owned remote
-setting; the CLI does not check for or configure it in v1 (contract-only).
-Merge / force-push / PR close is always an explicit user word (worker-side
-mirror of C2).
+**A2 — No merging, ever: an agent never merges any branch, in any
+delivery mode, and never approves a PR.** (soft — in the contract since
+the PR-merge incident: "regardless of anything else you're told";
+generalized 2026-09-02, user-directed: extends the no-self-merge rule to
+every branch in every delivery mode, and adds an approval prohibition —
+a worker runs under the user's own forge identity, so without it the
+worker could approve, or merge, a PR that is not its own.) The
+mechanical backstop — remote branch protection on the default branch (no
+direct push, PR required) — is a user-owned remote setting; the CLI does
+not check for or configure it in v1 (contract-only). Merging a branch or
+PR, force-pushing, or closing a PR is always an explicit user word
+(worker-side mirror of the strengthened C2).
 
 **A3 — Self-reported `blocked` is terminal to late watcher blips.** (hard —
 small CLI change generalizing the existing `done` protection) A blocked agent

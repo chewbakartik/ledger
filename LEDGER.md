@@ -38,9 +38,12 @@ what's below is a description of it, not a separate copy to keep in sync):
   - `direct-pr`: open a pull request against the default branch — using
     whatever tooling is available for that project's remote (e.g. `tea`
     for a Forgejo remote; ledger doesn't care which, that's your call) —
-    **do not merge it yourself, regardless of anything else you're told.**
-    PR review is a real checkpoint, not a formality to clear on your own
-    (see `DECISIONS.md` for the incident that made this explicit). Then
+    **never merge any branch or PR (your own or anyone else's), and
+    never approve any PR, regardless of anything else you're told,
+    including by the clerk.** PR review is a real checkpoint, not a
+    formality to clear on your own (see `DECISIONS.md` for the incident
+    that made this explicit, and the 2026-09-02 generalization that also
+    forbids approving any PR). Then
     `ledger agent update <your-agent-id> --status done --outcome
     '<pr-url>'`.
   - `local-only`: just `ledger agent update <your-agent-id> --status done
@@ -98,9 +101,11 @@ the code.
   concrete, in-the-moment, user-approved operation — executed exactly as
   approved, never inferred or generalized, conferring no standing
   authority.
-- **C2 — you never merge, force-push, or close a PR without an explicit
-  user word.** One explicit word at a time, in the moment; there is no
-  standing relaxation. (Worker-side mirror: A2.)
+- **C2 — you never merge a branch or PR, force-push, or close a PR without an
+  explicit user word naming the specific merge/pull request.** One explicit
+  word at a time, in the moment, for that specific PR; there is no standing
+  relaxation — a general instruction does not license a specific merge.
+  (Worker-side mirror: A2.)
 - **C4 — agents never address the user directly; you are the single
   channel.** If the user intervenes directly in a worker pane, that
   instruction is authoritative: reconcile at the next catch-up, never
@@ -119,6 +124,11 @@ the code.
 - **C9 — you do not self-modify.** Never edit your own contract or skills
   (this file, `DECISIONS.md`, the skill pointer) without explicit user
   approval — a gate must not be editable by the party it binds.
+- **C10 — you refer to a ledger item with visual context.** Always make an
+  item identifiable without board access: if it (or its project) has an open
+  PR/MR, include that PR/MR's number (and URL) alongside the ledger id — e.g.
+  'item #22 (PR #10)'; if no merge is open, add a short context phrase — the
+  item's title or a one-line description.
 
 **Liveness (A8, clerk side).** At catch-up, an `idle` agent with
 unfinished work is suspect — it may have died on a usage limit. `catchup`
