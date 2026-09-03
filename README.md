@@ -24,36 +24,29 @@ a general product.
 ## Install
 
 ```sh
-git clone <this-repo> ledger   # or you already have it locally
-cd ledger
-npm install
-npm run build
+npm install -g @devwithdavid/ledger
 ```
 
-**Make the CLI available.** Either:
-
-```sh
-npm link          # puts `ledger` on PATH globally
-```
-
-or invoke it directly / alias it:
-
-```sh
-node dist/cli/index.js ...
-```
+That's the whole install. The package ships pre-built, and the global
+install puts `ledger` on your PATH — no build step, no separate linking
+step: the `ledger` binary lands on PATH with the install itself.
 
 **Link the watcher plugin into herdr** — this is what keeps agent status
-current automatically as dispatched agents work, without any polling:
+current automatically as dispatched agents work, without any polling.
+`herdr-plugin.toml` ships inside the package, so point the link at the
+installed package's root:
 
 ```sh
-herdr plugin link .
+herdr plugin link "$(npm root -g)/@devwithdavid/ledger"
 ```
 
 This registers `herdr-plugin.toml`, so herdr invokes `dist/plugin/watcher.js`
 whenever a pane's detected agent state changes. It's local and reversible:
-`herdr plugin unlink ledger` removes it. Re-run `npm run build` after any
-change to `src/plugin/watcher.ts` — herdr always invokes whatever's
-currently in `dist/`.
+`herdr plugin unlink ledger` removes it. herdr always runs whatever's
+currently in the installed package's `dist/`, so `npm update -g
+@devwithdavid/ledger` picks up new releases (including watcher changes) on
+the next event; re-run the link command if you want the registered version
+to track a new release.
 
 ## Starting a clerk session
 
@@ -106,9 +99,9 @@ simply never fires.
 
 | Doc | What's in it |
 |---|---|
-| [`DESIGN.md`](./DESIGN.md) | The philosophy, why this exists, and the original schema/flow brief |
+| [`DESIGN.md`](./DESIGN.md) | The philosophy, why this exists, and the original schema/flow brief (in the git repo — public mirror coming soon) |
 | [`LEDGER.md`](./LEDGER.md) | The operational reference — full CLI surface, what the first clerk is responsible for vs. what a dispatched agent is told, and how to extend this safely |
-| [`DECISIONS.md`](./DECISIONS.md) | Running log of implementation decisions and why, including things verified live against the real herdr/treehouse binaries (some of herdr's actual behavior differs from its docs — see this file before assuming a documented API shape is accurate) |
+| [`DECISIONS.md`](./DECISIONS.md) | Running log of implementation decisions and why, including things verified live against the real herdr/treehouse binaries — some of herdr's actual behavior differs from its docs, so read this before assuming a documented API shape is accurate (in the git repo — public mirror coming soon) |
 
 ## Extending
 
@@ -125,11 +118,15 @@ genuinely does belong in core.
 
 ## Example extension
 
-[`ledger-notify`](../ledger-notify) *(sibling repo, once built)* — a
-desktop-notification plugin that watches for agents going `blocked` or
-`done`, built entirely outside this repo as a worked example of the
-extension model. See [`EXTENSION-EXAMPLE-BRIEF.md`](./EXTENSION-EXAMPLE-BRIEF.md)
-for the implementation brief.
+`ledger-notify` — a desktop-notification plugin that watches for agents
+going `blocked` or `done`, built entirely outside this repo as a worked
+example of the extension model. The plugin lives in a sibling git repo, and
+the implementation brief, [`EXTENSION-EXAMPLE-BRIEF.md`](./EXTENSION-EXAMPLE-BRIEF.md),
+is in this project's git repo — the public mirror for both is coming soon.
+None of that is needed to build an extension, though: the whole contract is
+reading/writing the SQLite file at `$LEDGER_HOME/ledger.db` or shelling out
+to the `ledger` CLI, as [`LEDGER.md` § "Safe ways to extend this"]
+(./LEDGER.md#safe-ways-to-extend-this) describes.
 
 ## Status
 

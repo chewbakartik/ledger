@@ -1,6 +1,6 @@
 {
   "name": "@devwithdavid/ledger",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Personal agent-orchestration ledger: SQLite state store, CLI, and herdr watcher plugin.",
   "type": "module",
   "bin": {
