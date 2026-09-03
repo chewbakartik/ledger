@@ -32,22 +32,34 @@ That's the whole install. The package ships pre-built, and the global
 install puts `ledger` on your PATH — no build step, no separate linking
 step: the `ledger` binary lands on PATH with the install itself.
 
-**Link the watcher plugin into herdr** — this is what keeps agent status
-current automatically as dispatched agents work, without any polling.
-`herdr-plugin.toml` ships inside the package, so point the link at the
-installed package's root:
+**Finish the setup with `ledger init`** — the single post-install step:
 
 ```sh
-herdr plugin link "$(npm root -g)/@devwithdavid/ledger"
+ledger init
 ```
 
-This registers `herdr-plugin.toml`, so herdr invokes `dist/plugin/watcher.js`
-whenever a pane's detected agent state changes. It's local and reversible:
-`herdr plugin unlink ledger` removes it. herdr always runs whatever's
-currently in the installed package's `dist/`, so `npm update -g
-@devwithdavid/ledger` picks up new releases (including watcher changes) on
-the next event; re-run the link command if you want the registered version
-to track a new release.
+Run it once after installing. It does three things, printing a status line
+for each as it goes:
+
+1. **Verifies `herdr` and `treehouse` are on your PATH.** If either is
+   missing it exits without doing anything else, with an install pointer
+   for each missing tool (herdr: <https://herdr.dev>, treehouse:
+   <https://github.com/markevans/treehouse>).
+2. **Creates the ledger database** at `$LEDGER_HOME/ledger.db` if it
+   doesn't exist yet. An existing store is never reset or rewritten.
+3. **Links the herdr watcher plugin**: runs `herdr plugin link` on the
+   installed package's root, where `herdr-plugin.toml` ships. That's what
+   keeps agent status current automatically as dispatched agents work,
+   without any polling — herdr invokes `dist/plugin/watcher.js` whenever a
+   pane's detected agent state changes.
+
+It's idempotent — re-running it (for example after `npm update -g
+@devwithdavid/ledger`) is safe: the store is only created if missing, and
+re-linking the plugin leaves herdr's registration unchanged. The link is
+local and reversible: `herdr plugin unlink ledger` removes it. herdr always
+runs whatever's currently in the installed package's `dist/`, so `npm
+update -g @devwithdavid/ledger` picks up new releases (including watcher
+changes) on the next event.
 
 ## Starting a clerk session
 

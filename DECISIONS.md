@@ -1115,3 +1115,53 @@ chose MIT.
   from the next publish onward) and in this entry — rather than by an
   edit to the old tarballs, which is not merely inadvisable but
   impossible.
+
+## CLI version derived from package.json at runtime — 2026-09-03, user-directed (item 30, part A)
+
+**Finding:** after the 0.1.2 publish, `ledger --version` still reported
+0.1.0 — `src/cli/index.ts` hardcoded `.version("0.1.0")`, a second copy of
+the version that publishing no longer touches. A second clerk independently
+reported the same desync; the user made it item 30.
+
+**Decision:** the CLI's version is derived from the package's own
+package.json at runtime — package.json is the ONLY source of the version,
+and the publish process never edits a CLI literal (there is no literal
+to edit). The entry compiles to `dist/cli/index.js`, two levels below the
+package root, so the read is resolved relative to the running entry file
+(`fileURLToPath`, the same approach `ledger docs` uses), not the cwd —
+that works from any invocation directory, in a dev checkout and in an npm
+install (the npm tarball carries package.json at its root — verified in
+the 0.1.2 tarball). Graceful degradation: an unreadable/unparseable
+package.json reports "unknown" instead of throwing — a version query must
+never take the CLI down (item 30, DECISIONS.md).
+
+## `ledger init`: the single post-install step — 2026-09-03, user-directed (item 30, part B)
+
+**Decision:** a new `ledger init` command is the single post-install step;
+it replaces the README's manual `herdr plugin link <path>` instruction.
+Tool checks fail fast with install guidance: before any side effect, `init`
+does a PATH lookup for both required tools (herdr, treehouse); a missing
+tool exits non-zero with the exact per-tool message
+`<tool> not found on PATH - install it first: <docs URL>`, reporting both
+in one error when both are missing. The doc URLs are derived from the
+tools' own npm package metadata, verified 2026-09-03, not guessed:
+`npm view herdr homepage` → https://herdr.dev; `npm view treehouse
+homepage` → https://github.com/markevans/treehouse. After the pre-check:
+ensure the store by reusing the existing `getDb()` machinery (idempotent —
+an existing store is never reset or rewritten), printing the path created
+or found; then link the herdr plugin by running `herdr plugin link
+<package root>` — the directory containing `herdr-plugin.toml`, resolved
+relative to the running entry file, same as part A's package.json
+resolution. Every step prints an explicit ✓ status line naming what was
+done and the path/URL involved, so the user sees exactly what the command
+did. Verified live against herdr 0.7.5: re-linking an already-linked path
+is a no-op (exit 0, `plugin_linked` JSON result, herdr's plugin registry
+file byte-identical), so re-running `init` is safe.
+
+**Note (out of scope, observed 2026-09-03):** the README's
+*prerequisites* section links https://github.com/kunchenguid/treehouse for
+treehouse, while the npm package's metadata points at
+https://github.com/markevans/treehouse (the installed binary reports
+v2.3.0 while npm's `treehouse` package is 3.3.1 — possibly different
+distributions). `init` uses the npm-derived URL per the decision above;
+the prerequisites link was left untouched.
