@@ -1143,10 +1143,14 @@ Tool checks fail fast with install guidance: before any side effect, `init`
 does a PATH lookup for both required tools (herdr, treehouse); a missing
 tool exits non-zero with the exact per-tool message
 `<tool> not found on PATH - install it first: <docs URL>`, reporting both
-in one error when both are missing. The doc URLs are derived from the
-tools' own npm package metadata, verified 2026-09-03, not guessed:
-`npm view herdr homepage` → https://herdr.dev; `npm view treehouse
-homepage` → https://github.com/markevans/treehouse. After the pre-check:
+in one error when both are missing. herdr's doc URL is derived from the
+tool's own npm package metadata, verified 2026-09-03, not guessed:
+`npm view herdr homepage` → https://herdr.dev (unchanged). treehouse's
+doc URL was RESOLVED 2026-09-04, user-confirmed: the required tool is
+kunchenguid's git-worktree tool (installed binary v2.3.0) — npm's
+`treehouse` package is an unrelated React project that squats the name —
+so the URL is taken from the user/GitHub, not npm metadata:
+https://github.com/kunchenguid/treehouse. After the pre-check:
 ensure the store by reusing the existing `getDb()` machinery (idempotent —
 an existing store is never reset or rewritten), printing the path created
 or found; then link the herdr plugin by running `herdr plugin link
@@ -1158,10 +1162,13 @@ did. Verified live against herdr 0.7.5: re-linking an already-linked path
 is a no-op (exit 0, `plugin_linked` JSON result, herdr's plugin registry
 file byte-identical), so re-running `init` is safe.
 
-**Note (out of scope, observed 2026-09-03):** the README's
+**Note (observed 2026-09-03, RESOLVED 2026-09-04):** the README's
 *prerequisites* section links https://github.com/kunchenguid/treehouse for
-treehouse, while the npm package's metadata points at
-https://github.com/markevans/treehouse (the installed binary reports
-v2.3.0 while npm's `treehouse` package is 3.3.1 — possibly different
-distributions). `init` uses the npm-derived URL per the decision above;
-the prerequisites link was left untouched.
+treehouse, while the npm package's metadata pointed at a different
+`treehouse`. Resolved per user confirmation 2026-09-04: the required
+tool is kunchenguid's git-worktree tool (installed binary v2.3.0); npm's
+`treehouse` (3.3.1) is an unrelated React project that squats the name —
+different tools, not different distributions. The URL is therefore taken
+from the user/GitHub (https://github.com/kunchenguid/treehouse), not
+from npm metadata; `init`'s pre-check pointer and the README's
+prerequisites link now agree on it.

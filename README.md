@@ -44,7 +44,7 @@ for each as it goes:
 1. **Verifies `herdr` and `treehouse` are on your PATH.** If either is
    missing it exits without doing anything else, with an install pointer
    for each missing tool (herdr: <https://herdr.dev>, treehouse:
-   <https://github.com/markevans/treehouse>).
+   <https://github.com/kunchenguid/treehouse>).
 2. **Creates the ledger database** at `$LEDGER_HOME/ledger.db` if it
    doesn't exist yet. An existing store is never reset or rewritten.
 3. **Links the herdr watcher plugin**: runs `herdr plugin link` on the

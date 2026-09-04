@@ -13,16 +13,18 @@ import { getDb, ledgerHome } from "../../db/client.js";
 // so that directory is what gets linked.
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-// Install pointers for the pre-check. Each URL was derived from the tool's
-// own npm package metadata, verified 2026-09-03 — NOT guessed:
-//   npm view herdr homepage       -> https://herdr.dev
-//   npm view treehouse homepage   -> https://github.com/markevans/treehouse
-// (The README's prerequisites section still carries an older treehouse link;
-// item 30's decision is that `init` uses the npm-derived URLs — see
-// DECISIONS.md.)
+// Install pointers for the pre-check:
+//   herdr: derived from the tool's own npm package metadata, verified
+//   2026-09-03 — NOT guessed: npm view herdr homepage -> https://herdr.dev
+//   treehouse: npm's 'treehouse' is an unrelated React package (name
+//   squat); the required tool is kunchenguid's git-worktree tool
+//   (installed binary v2.3.0) — URL per user confirmation 2026-09-04,
+//   not npm metadata.
+// (The README's prerequisites section carries the same treehouse URL —
+// the two now agree; see DECISIONS.md for the resolution.)
 const DOCS: { herdr: string; treehouse: string } = {
   herdr: "https://herdr.dev",
-  treehouse: "https://github.com/markevans/treehouse",
+  treehouse: "https://github.com/kunchenguid/treehouse",
 };
 
 const REQUIRED_TOOLS = ["herdr", "treehouse"] as const;
