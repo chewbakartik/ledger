@@ -136,3 +136,12 @@ with a high release cadence; some of the CLI/plugin behavior this repo
 depends on was reverse-engineered live (their docs don't fully match
 current behavior in places — see `DECISIONS.md`) and may need
 re-verification after either tool upgrades.
+
+## License
+
+MIT — see [`LICENSE`](./LICENSE).
+
+Versions 0.1.0-0.1.2 were published to npm before this LICENSE file
+existed, so their tarballs don't contain it: published npm versions are
+immutable. As the sole author, the copyright holder grants those versions
+the same MIT license.

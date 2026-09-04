@@ -2,11 +2,14 @@
   "name": "@devwithdavid/ledger",
   "version": "0.1.2",
   "description": "Personal agent-orchestration ledger: SQLite state store, CLI, and herdr watcher plugin.",
+  "license": "MIT",
+  "repository": "https://yggdrasil.thekartiks.com/chewbakartik/ledger.git",
   "type": "module",
   "bin": {
     "ledger": "dist/cli/index.js"
   },
   "files": [
+    "LICENSE",
     "dist",
     "LEDGER.md",
     "README.md",

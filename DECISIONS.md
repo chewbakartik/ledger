@@ -1086,3 +1086,32 @@ claimed and then died — either could be displaced by an unforced
   upsert so this invocation's heartbeat is a one-shot no-op.
 - `catchup`'s existing `last_seen` write is kept as belt-and-braces,
   not the only source anymore.
+
+## License: MIT, with a retroactive grant for the pre-license versions — 2026-09-03, user-directed
+
+**The decision: `@devwithdavid/ledger` is MIT-licensed (user, 2026-09-03).**
+The repo had no LICENSE file and `package.json` had no `license` field, so
+every published version (0.1.0-0.1.2) shipped with no machine-readable
+license designation — the terms of use were formally undefined. The user
+chose MIT.
+
+- **`LICENSE` at the repo root** — the canonical OSI text (fetched from
+  https://opensource.org/licenses/MIT, not typed from memory), copyright
+  line exactly `Copyright (c) 2026 David Kartik`.
+- **`package.json`** — `"license": "MIT"` added; `"repository"` added as
+  the https form of the actual git remote (`git remote get-url origin`);
+  `"LICENSE"` added to the `files` allowlist. The allowlist matters:
+  without it the tarball would *still* ship without the license file,
+  since npm's default inclusions (package.json, README) do not cover
+  LICENSE when a `files` array is present.
+- **Retroactive grant as a statement, not a tarball edit.** Versions
+  0.1.0-0.1.2 were published before the LICENSE file existed, and their
+  tarballs cannot be fixed: published npm versions are immutable
+  (`npm publish` refuses to re-publish an existing version, and a newer
+  version would not re-license the older ones). The copyright holder is
+  the sole author, so granting those versions the same MIT terms needs
+  no other party's consent. The grant is therefore recorded as a
+  statement — in the README's License section (carried by every tarball
+  from the next publish onward) and in this entry — rather than by an
+  edit to the old tarballs, which is not merely inadvisable but
+  impossible.
