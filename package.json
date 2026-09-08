@@ -13,7 +13,8 @@
     "dist",
     "LEDGER.md",
     "README.md",
-    "herdr-plugin.toml"
+    "herdr-plugin.toml",
+    "skills"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
