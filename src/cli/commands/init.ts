@@ -1,5 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, statSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
@@ -12,6 +23,22 @@ import { getDb, ledgerHome } from "../../db/client.js";
 // The herdr plugin manifest (herdr-plugin.toml) lives at the package root,
 // so that directory is what gets linked.
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+// Step 4's bundled skill template: a hand-authored `~/.agents/skills/ledger`
+// (cross-agent skill tree; see DECISIONS.md "Clerk bootstrapping") existed
+// on one machine only and was never captured as a reproducible setup step —
+// a second machine's clerk session never loaded LEDGER.md as a result and
+// spent a whole session unaware of its own governance gates. This ships the
+// real skill content as a package asset instead, resolved the same way as
+// the herdr plugin root above, so `init` can (re-)install it anywhere.
+const SKILL_TEMPLATE_PATH = join(PACKAGE_ROOT, "skills/ledger/SKILL.md");
+const AGENTS_SKILL_DIR = join(homedir(), ".agents/skills/ledger");
+const AGENTS_SKILL_FILE = join(AGENTS_SKILL_DIR, "SKILL.md");
+// Deliberately outside this repo (same reasoning as the skill itself living
+// outside it) — per-tool skill directories are symlinks into the shared
+// `~/.agents/skills/<name>` tree, so any coding agent that understands that
+// convention picks it up with zero ledger-specific config of its own.
+const SKILL_SYMLINK_TARGETS = [join(homedir(), ".claude/skills/ledger"), join(homedir(), ".pi/agent/skills/ledger")];
 
 // Install pointers for the pre-check:
 //   herdr: derived from the tool's own npm package metadata, verified
@@ -50,6 +77,40 @@ function findOnPath(tool: string): string | undefined {
 }
 
 /**
+ * Step 4 helper: symlink one per-tool skill path to AGENTS_SKILL_DIR,
+ * creating its parent directory if needed. Idempotent: a symlink already
+ * pointing at the right place is a silent no-op; a pre-existing real
+ * file/directory (or a symlink to somewhere else) is left untouched with a
+ * warning rather than clobbered — this must never destroy something a user
+ * put there on purpose.
+ */
+function linkSkill(linkPath: string): void {
+  mkdirSync(dirname(linkPath), { recursive: true });
+
+  if (existsSync(linkPath)) {
+    let currentTarget: string | undefined;
+    try {
+      currentTarget = readlinkSync(linkPath);
+    } catch {
+      // Exists but isn't a symlink at all.
+    }
+    if (currentTarget === AGENTS_SKILL_DIR) {
+      console.log(`✓ ${linkPath} already links to ${AGENTS_SKILL_DIR}`);
+    } else {
+      console.log(
+        `Warning: ${linkPath} already exists and is not a symlink to ${AGENTS_SKILL_DIR} ` +
+          `(${currentTarget ?? "a real file/directory"}) — left untouched. Remove it and ` +
+          `re-run 'ledger init' to relink.`,
+      );
+    }
+    return;
+  }
+
+  symlinkSync(AGENTS_SKILL_DIR, linkPath);
+  console.log(`✓ linked ${linkPath} -> ${AGENTS_SKILL_DIR}`);
+}
+
+/**
  * The single post-install step (item 30, user-directed): the README's
  * install section no longer tells users to hand-run `herdr plugin link
  * <path>` — this command does that, transparently.
@@ -71,6 +132,13 @@ function findOnPath(tool: string): string | undefined {
  *     instance an already-linked different path) is surfaced: herdr's
  *     own output is printed, the command fails, and the user resolves it
  *     (`herdr plugin unlink ledger` first).
+ *  4. Install/update the clerk skill: write the bundled
+ *     `skills/ledger/SKILL.md` to `~/.agents/skills/ledger/SKILL.md`
+ *     (always overwritten from the bundled copy, so re-running `init`
+ *     after an upgrade re-syncs it), then symlink `~/.claude/skills/ledger`
+ *     and `~/.pi/agent/skills/ledger` to it if not already correctly
+ *     linked. Found missing on a second machine (see DECISIONS.md) —
+ *     the skill's *content* was portable, but nothing ever installed it.
  *
  * Every step prints an explicit status line (✓) naming what was done and
  * the path/URL involved, so the user sees exactly what `ledger init` did.
@@ -80,8 +148,8 @@ export function registerInitCommand(program: Command): void {
     .command("init")
     .description(
       "one-time post-install setup: verify herdr and treehouse are on PATH, " +
-        "create the ledger store if missing, link the herdr watcher plugin " +
-        "(idempotent — safe to re-run)",
+        "create the ledger store if missing, link the herdr watcher plugin, " +
+        "install the clerk skill (idempotent — safe to re-run)",
     )
     .action(() => {
       // 1. Pre-check both required tools up front, before any side effect.
@@ -124,5 +192,24 @@ export function registerInitCommand(program: Command): void {
       const out = res.stdout ?? "";
       if (out.trim()) console.log(out.trimEnd());
       console.log(`✓ herdr plugin linked from ${PACKAGE_ROOT}`);
+
+      // 4. Install/update the clerk skill from the bundled template, then
+      //    link it into every known per-tool skill tree.
+      let skillTemplate: string;
+      try {
+        skillTemplate = readFileSync(SKILL_TEMPLATE_PATH, "utf8");
+      } catch {
+        throw new Error(
+          `couldn't read the bundled skill template at ${SKILL_TEMPLATE_PATH} ` +
+            `— is this a complete ledger install, not a partial copy?`,
+        );
+      }
+      const skillAlreadyThere = existsSync(AGENTS_SKILL_FILE);
+      mkdirSync(AGENTS_SKILL_DIR, { recursive: true });
+      writeFileSync(AGENTS_SKILL_FILE, skillTemplate);
+      console.log(`✓ clerk skill ${skillAlreadyThere ? "updated at" : "installed at"} ${AGENTS_SKILL_FILE}`);
+      for (const linkPath of SKILL_SYMLINK_TARGETS) {
+        linkSkill(linkPath);
+      }
     });
 }

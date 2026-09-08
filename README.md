@@ -38,7 +38,7 @@ step: the `ledger` binary lands on PATH with the install itself.
 ledger init
 ```
 
-Run it once after installing. It does three things, printing a status line
+Run it once after installing. It does four things, printing a status line
 for each as it goes:
 
 1. **Verifies `herdr` and `treehouse` are on your PATH.** If either is
@@ -52,31 +52,37 @@ for each as it goes:
    keeps agent status current automatically as dispatched agents work,
    without any polling — herdr invokes `dist/plugin/watcher.js` whenever a
    pane's detected agent state changes.
+4. **Installs the clerk skill** at `~/.agents/skills/ledger/SKILL.md` from
+   the copy bundled with this install, symlinking it into
+   `~/.claude/skills/ledger` and `~/.pi/agent/skills/ledger` so either tool
+   picks it up. See "Starting a clerk session" below for what the skill
+   does.
 
 It's idempotent — re-running it (for example after `npm update -g
-@devwithdavid/ledger`) is safe: the store is only created if missing, and
-re-linking the plugin leaves herdr's registration unchanged. The link is
-local and reversible: `herdr plugin unlink ledger` removes it. herdr always
-runs whatever's currently in the installed package's `dist/`, so `npm
-update -g @devwithdavid/ledger` picks up new releases (including watcher
-changes) on the next event.
+@devwithdavid/ledger`) is safe: the store is only created if missing,
+re-linking the plugin leaves herdr's registration unchanged, the skill
+file is always re-synced from the bundled copy, and an existing symlink is
+only touched if it doesn't already point at the right place. The plugin
+link is local and reversible: `herdr plugin unlink ledger` removes it.
+herdr always runs whatever's currently in the installed package's `dist/`,
+so `npm update -g @devwithdavid/ledger` picks up new releases (including
+watcher changes) on the next event.
 
 ## Starting a clerk session
 
 You don't run `ledger` commands yourself day to day — you talk to **the
-clerk** (a Claude Code or Pi session), and it runs them on your behalf. A
-`ledger` skill is installed at `~/.agents/skills/ledger` (symlinked into
-both `~/.claude/skills/` and `~/.pi/agent/skills/`) so either tool can pick
-it up — it loads only when you actually ask for ledger-related work
-(register a project, dispatch an agent, check status, ...), not on every
-unrelated session.
+clerk** (a Claude Code or Pi session), and it runs them on your behalf.
+`ledger init` (step 4 above) installs a `ledger` skill so either Claude
+Code or Pi can pick it up — it loads only when you actually ask for
+ledger-related work (register a project, dispatch an agent, check status,
+...), not on every unrelated session.
 
 The skill itself carries no machine-specific path: it just tells the clerk
 to run `ledger docs`, which prints `LEDGER.md` by resolving it relative to
 wherever `ledger` is actually installed (works correctly through the
 `npm link` symlink too — proven live, see `DECISIONS.md`). That's what
-makes the skill portable to a fresh machine as-is: install `ledger` there
-per this README, and the skill works with no edits.
+makes the skill portable to a fresh machine as-is: run `ledger init` there
+and the skill works with no edits.
 
 ## Quick start (what the clerk actually runs)
 

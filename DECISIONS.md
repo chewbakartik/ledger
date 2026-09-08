@@ -1172,3 +1172,44 @@ different tools, not different distributions. The URL is therefore taken
 from the user/GitHub (https://github.com/kunchenguid/treehouse), not
 from npm metadata; `init`'s pre-check pointer and the README's
 prerequisites link now agree on it.
+
+## `ledger init` step 4: install the clerk skill — 2026-09-08, user-directed (item 30, part C)
+
+**Found:** a clerk session on a second machine had no `ledger` skill under
+`~/.agents/skills/` at all (see "Clerk bootstrapping" above for what that
+tree is). It never ran `ledger docs`, never loaded `LEDGER.md`, and spent
+a whole session unaware of its own governance gates as a direct result —
+editing tracked-project code directly instead of dispatching, dispatching
+via a generic subagent instead of `ledger agent dispatch`, and never
+running `ledger catchup` as its first act. Root cause: the skill was
+hand-authored once, on one machine, and the README only ever documented
+that it *exists* — never how to install it. Its content was portable (see
+"Skill portability" above); nothing about its *installation* was.
+
+Compounded by that same clerk also never having fetched from origin: it
+independently reconstructed the skill's likely content from this file's
+own description of it, then built a **second, competing** `ledger init`
+command from scratch (name collision, unrelated purpose — it knew nothing
+of parts A/B above) before the user pointed it at the real
+`item-30-version-and-init` branch. Worth naming plainly: skipping `git
+fetch` before starting work on a shared tool is exactly how this kind of
+silent duplicate-work happens, independent of the skill problem itself.
+
+**Decision:** fold skill installation into the existing `ledger init` as
+step 4, not a separate command. Ships the real skill content as a package
+asset at `skills/ledger/SKILL.md` (pulled from the actual
+`~/.agents/skills/ledger/SKILL.md` on the user's other machine and
+verified byte-identical after installing, not reconstructed), resolved
+the same way as the herdr plugin root (relative to the running entry
+file). `init` writes it to `~/.agents/skills/ledger/SKILL.md` — always
+overwritten from the bundled copy, so re-running `init` after an upgrade
+re-syncs it — then symlinks `~/.claude/skills/ledger` and
+`~/.pi/agent/skills/ledger` to it, creating parent directories as needed.
+Idempotent the same way step 3's plugin link is: a symlink already
+pointing at the right place is a silent no-op; a pre-existing real
+file/directory (or a symlink elsewhere) is left untouched with a warning
+rather than clobbered.
+
+Not yet decided: whether an `npm install`/`npm link` postinstall hook
+should run `init` automatically, so a fresh machine never needs the step
+run by hand at all.
