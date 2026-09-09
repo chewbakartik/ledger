@@ -2,6 +2,8 @@ import { Command } from "commander";
 import { getDb, suppressNextClerkHeartbeat } from "../../db/client.js";
 import type { FirstClerkRow } from "../../db/types.js";
 import * as herdr from "../../lib/herdr.js";
+import { packageVersion } from "../../lib/package-info.js";
+import { checkForUpdate, formatUpdateNotice } from "../../lib/update-check.js";
 import { printJson } from "../format.js";
 
 const STALE_AFTER_HOURS = 12;
@@ -18,7 +20,7 @@ export function registerClerkCommands(program: Command): void {
     .requiredOption("--session-id <id>", "this clerk session's id")
     .requiredOption("--herdr-pane <id>", "this clerk's own herdr pane id")
     .option("--force", "claim even if the existing claim is not stale")
-    .action((opts: { sessionId: string; herdrPane: string; force?: boolean }) => {
+    .action(async (opts: { sessionId: string; herdrPane: string; force?: boolean }) => {
       const db = getDb();
       const existing = db
         .prepare("SELECT * FROM first_clerk WHERE id = 1")
@@ -54,6 +56,12 @@ export function registerClerkCommands(program: Command): void {
       renameClaimantWorkspace(opts.herdrPane);
 
       printJson(row);
+
+      // Item 42: cached (6h), silent-on-failure update-availability notice.
+      // `claim` has no --json mode, so a plain-text line after the JSON
+      // output is fine per the spec.
+      const update = await checkForUpdate(packageVersion());
+      if (update) console.log(formatUpdateNotice(update));
     });
 
   clerk

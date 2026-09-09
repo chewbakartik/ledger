@@ -170,6 +170,15 @@ repeating the same failure under every idle agent. `--json` includes the
 same data as an `idle` array (`agent`, `pane_tail`, `pane_read_error`) plus
 top-level `idle_pane_read_note` for the whole-socket case.
 
+`catchup` also checks (item 42) whether a newer `@devwithdavid/ledger` npm
+version exists — a plain-text notice after the normal output in
+human-readable mode, or the top-level `update_available` JSON key
+(`{current, latest}` or `null`) in `--json` mode, so `--json` output stays
+valid JSON either way. The check is cached for 6h in
+`$LEDGER_HOME/update-check.json` and degrades silently on any failure
+(offline, timeout, malformed response) — it never delays or breaks
+`catchup`. Run `ledger update` to actually upgrade.
+
 ### First-clerk claiming
 
 ```sh
@@ -180,6 +189,25 @@ ledger clerk status
 `claim` fails if another claim exists and is under 12 hours old, unless
 `--force` is passed. Do this once per new/resumed clerk session before
 dispatching anything.
+
+`claim` runs the same cached update-availability check as `catchup` (item
+42); since `claim` has no `--json` mode, a matching newer version prints
+as a plain-text line after the claim's JSON output.
+
+### Updating ledger
+
+```sh
+ledger update
+```
+
+Checks npm for the latest `@devwithdavid/ledger` version (always fresh —
+never the 6h cache `claim`/`catchup` use, since this is an explicit user
+action). Already up to date: says so and exits. Newer version available:
+runs `npm install -g @devwithdavid/ledger@latest` immediately (no
+confirmation prompt) and reports old → new version. Unlike the passive
+notice above, failures here (registry unreachable, npm install error) are
+never swallowed — this is a foreground action, so they're reported
+plainly and the command exits non-zero.
 
 ### Registering a project
 

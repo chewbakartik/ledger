@@ -1248,3 +1248,43 @@ enforcement after their own incidents) — there's no CLI-side notion of
 definition the clerk acting outside the tool. This remains a
 read-the-gate-correctly problem, same category as the self-merge
 incident above, not a build-a-mechanism one.
+
+## Update-availability notice + `ledger update` — 2026-09-09 (item 42)
+
+**Decision:** the update check queries the npm registry directly
+(`fetch("https://registry.npmjs.org/@devwithdavid/ledger/latest")`) rather
+than shelling out to `npm view`/`npm show`. Item 42's own spec only
+confirmed the package is reachable via `npm view` — it didn't mandate the
+CLI as the mechanism. A direct registry fetch avoids spawning a child
+process (and its slower cold-start) on the hot `claim`/`catchup` path,
+needs no error-envelope parsing the way `herdr`'s CLI wrapper does, and
+`fetch`/`AbortSignal.timeout` are already available in the Node 22.13+
+this project already requires (see the `node:sqlite` decision above) — no
+new dependency. `ledger update` itself still shells out to `npm install -g`
+(spawnSync, `stdio: "inherit"`) since that's the actual mechanism the
+README already documents for installing this package.
+
+Semver comparison (`isNewerVersion` in `src/lib/update-check.ts`) is a
+small hand-rolled major/minor/patch tuple compare, not a `semver`
+dependency — this package only ever compares two well-formed
+`x.y.z` versions (its own package.json version against what npm reports),
+which doesn't need range matching, prereleases, or build metadata.
+
+The 6h cache lives at `$LEDGER_HOME/update-check.json` as a plain JSON
+file (`{checkedAt, latestVersion}`), not a `ledger.db` table/migration —
+per the spec, this is per-machine, disposable check-state that no clerk
+needs to see across machines, unlike everything else in the schema.
+`ledger update` always bypasses this cache (a fresh check on an explicit
+user action) and, unlike the passive `claim`/`catchup` notice, surfaces a
+failed check or a failed `npm install` as a real error with non-zero
+exit — unlike the passive notice, this is a foreground action the user is
+directly waiting on, so silent degradation would hide a failure they
+need to see.
+
+`catchup --json`'s new `update_available` key is `{current, latest}` or
+`null` — added as a real top-level key rather than folding the notice
+into any existing text field, so `--json` output stays parseable either
+way (the spec's explicit requirement). `clerk claim` has no `--json` mode
+at all, so its notice is a plain-text line printed after the claim's JSON
+row — mixed output, but the spec calls this out as acceptable specifically
+because `claim` has nothing to keep parseable.

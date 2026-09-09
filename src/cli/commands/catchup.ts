@@ -3,6 +3,8 @@ import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow } from "../../db/types.js";
 import { HerdrError, readPane } from "../../lib/herdr.js";
+import { packageVersion } from "../../lib/package-info.js";
+import { checkForUpdate, formatUpdateNotice, type UpdateInfo } from "../../lib/update-check.js";
 import { printJson } from "../format.js";
 import { getProjectByName } from "./projects.js";
 
@@ -96,7 +98,7 @@ export function registerCatchupCommand(program: Command): void {
       IDLE_PANE_TAIL_DEFAULT_LINES,
     )
     .option("--json", "output as JSON (default: human-readable)")
-    .action((opts: { project?: string; idlePaneLines: number; json?: boolean }) => {
+    .action(async (opts: { project?: string; idlePaneLines: number; json?: boolean }) => {
       const db = getDb();
       const project = opts.project ? getProjectByName(opts.project) : undefined;
 
@@ -169,7 +171,21 @@ export function registerCatchupCommand(program: Command): void {
         ).run();
       }
 
-      const summary = { since, blocked, idle, idle_pane_read_note: idlePaneGlobalNote, events, roadmap };
+      // Item 42: cached (6h), silent-on-failure update-availability check.
+      // Added as an explicit top-level key (`update_available`, null when
+      // there's nothing to report) rather than mixed into plain text, so
+      // --json stays valid JSON in both cases.
+      const updateAvailable: UpdateInfo | null = await checkForUpdate(packageVersion());
+
+      const summary = {
+        since,
+        blocked,
+        idle,
+        idle_pane_read_note: idlePaneGlobalNote,
+        events,
+        roadmap,
+        update_available: updateAvailable,
+      };
 
       if (opts.json) {
         printJson(summary);
@@ -207,5 +223,7 @@ export function registerCatchupCommand(program: Command): void {
         const indent = r.parent_id ? "    " : "  ";
         console.log(`${indent}#${r.id} [${r.status}] ${r.title}`);
       }
+
+      if (updateAvailable) console.log(`\n${formatUpdateNotice(updateAvailable)}`);
     });
 }

@@ -68,6 +68,13 @@ herdr always runs whatever's currently in the installed package's `dist/`,
 so `npm update -g @devwithdavid/ledger` picks up new releases (including
 watcher changes) on the next event.
 
+**Or just run `ledger update`** — checks npm for a newer version and, if
+one exists, runs the install for you (equivalent to `npm install -g
+@devwithdavid/ledger@latest`). `ledger claim` and `ledger catchup` also
+print a one-line notice when a newer version is available (checked at
+most every 6 hours, silently skipped if npm is unreachable), so you don't
+have to think to check.
+
 ## Starting a clerk session
 
 You don't run `ledger` commands yourself day to day — you talk to **the
