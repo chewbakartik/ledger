@@ -9,7 +9,8 @@ export const migration0002ProjectHerdrWorkspace: Migration = {
     -- the id here; every later dispatch to the same project reuses it,
     -- adding a new tab rather than a new workspace. NULL until a first
     -- dispatch happens, and re-nulled/replaced if that workspace is found
-    -- closed (see src/lib/herdr.ts workspaceExists).
+    -- closed or recycled to a different project (see src/lib/herdr.ts
+    -- getWorkspace and openDispatchPane's use of it).
     ALTER TABLE projects ADD COLUMN herdr_workspace TEXT;
   `,
 };
