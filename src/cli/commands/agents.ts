@@ -728,31 +728,6 @@ interface DispatchPane {
 }
 
 /**
- * True only if `workspaceId` still exists AND is still the workspace
- * belonging to `project` — not just that the id resolves to *some*
- * workspace. Workspace ids are recycled by herdr (e.g. after a herdr
- * restart resets its allocation), so a stale stored id can collide with an
- * unrelated, freshly-created workspace that happens to reuse the same id.
- * Workspaces are created with `label: project.name` (see openDispatchPane
- * below), so comparing the label is how identity — not just existence — is
- * verified.
- */
-function workspaceBelongsToProject(workspaceId: string, project: ProjectRow): boolean {
-  try {
-    // quiet: this is a routine "is it still ours?" check, run on every
-    // dispatch — a missing/stale workspace is an expected, handled outcome,
-    // not noise worth printing to the terminal every time.
-    const workspace = herdr.getWorkspace(workspaceId, { quiet: true });
-    return workspace.label === project.name;
-  } catch (err) {
-    if (err instanceof herdr.HerdrError && err.code === "workspace_not_found") {
-      return false;
-    }
-    throw err;
-  }
-}
-
-/**
  * One herdr workspace per project, not per dispatch (per the user — see
  * DECISIONS.md): reuses the project's existing workspace as a new tab when
  * one is already live, or creates it (and records it via the caller) when
@@ -761,7 +736,7 @@ function workspaceBelongsToProject(workspaceId: string, project: ProjectRow): bo
  * last dispatch.
  */
 function openDispatchPane(project: ProjectRow, cwd: string, label: string): DispatchPane {
-  if (project.herdr_workspace && workspaceBelongsToProject(project.herdr_workspace, project)) {
+  if (project.herdr_workspace && herdr.workspaceHasLabel(project.herdr_workspace, project.name)) {
     const tab = herdr.createTab({
       workspace: project.herdr_workspace,
       cwd,

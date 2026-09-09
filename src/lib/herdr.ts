@@ -179,6 +179,29 @@ export function getPane(paneId: string, opts?: { quiet?: boolean }): HerdrPaneIn
   return result.pane;
 }
 
+/**
+ * True only if `workspaceId` still exists AND its label matches `label` —
+ * not just that the id resolves to *some* workspace. Workspace ids are
+ * recycled by herdr (e.g. after a herdr restart resets its allocation), so
+ * a stale stored id can collide with an unrelated, freshly-created
+ * workspace that happens to reuse the same id. Comparing the label is how
+ * identity — not just existence — is verified.
+ */
+export function workspaceHasLabel(workspaceId: string, label: string): boolean {
+  try {
+    // quiet: this is a routine "is it still the one we think it is?"
+    // check — a missing/stale workspace is an expected, handled outcome,
+    // not noise worth printing to the terminal every time.
+    const workspace = getWorkspace(workspaceId, { quiet: true });
+    return workspace.label === label;
+  } catch (err) {
+    if (err instanceof HerdrError && err.code === "workspace_not_found") {
+      return false;
+    }
+    throw err;
+  }
+}
+
 export interface HerdrTabCreateResult {
   tab: { tab_id: string; workspace_id: string; label: string };
   root_pane: HerdrPaneInfo;
