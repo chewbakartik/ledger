@@ -12,6 +12,9 @@ it can't drift out of sync with the real CLI, and carries no machine-
 specific path — `ledger docs` resolves its own reference doc relative to
 wherever the `ledger` package is actually installed on this machine.
 
-If `ledger` isn't found on PATH, it isn't installed here yet: find the
-`ledger` project's own repo (or ask the user where it's cloned) and follow
-its `README.md` install steps first.
+If `ledger` isn't found on PATH, either it isn't installed here yet
+(`npm install -g @devwithdavid/ledger`, then `ledger init` — see the
+project's README for prerequisites), or it's installed but npm's global
+bin directory isn't on PATH (`npm config get prefix`, then confirm
+`<that prefix>/bin` is in `$PATH` — common after switching Node
+versions/managers).
