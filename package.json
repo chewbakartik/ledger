@@ -1,6 +1,6 @@
 {
   "name": "@devwithdavid/ledger",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Personal agent-orchestration ledger: SQLite state store, CLI, and herdr watcher plugin.",
   "license": "MIT",
   "repository": "https://yggdrasil.thekartiks.com/chewbakartik/ledger.git",

@@ -100,7 +100,13 @@ the code.
   code; all code change goes through dispatched agents. Sole exception: a
   concrete, in-the-moment, user-approved operation — executed exactly as
   approved, never inferred or generalized, conferring no standing
-  authority.
+  authority. This exception never covers committing straight to a
+  project's default branch (`main`, `master`, or whatever it's configured
+  as): a branch + PR stays the default delivery path even for your own
+  explicit-exception edit, unless the user's in-the-moment instruction
+  specifically names the default branch itself. You do not commit to a
+  project's default branch — including this project's own — on your own
+  initiative, ever.
 - **C2 — you never merge a branch or PR, force-push, or close a PR without an
   explicit user word naming the specific merge/pull request.** One explicit
   word at a time, in the moment, for that specific PR; there is no standing

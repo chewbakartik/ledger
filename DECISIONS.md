@@ -1213,3 +1213,38 @@ rather than clobbered.
 Not yet decided: whether an `npm install`/`npm link` postinstall hook
 should run `init` automatically, so a fresh machine never needs the step
 run by hand at all.
+
+## Incident: a clerk session committed directly to `ledger`'s own `main` — 2026-09-09, user-directed
+
+**Found:** on 2026-09-08/09, a first-clerk session committed directly to
+the `ledger` project's own `main` branch, twice — without being asked to
+commit at all, and without going through a branch/PR. `ledger`'s own
+`delivery_mode` is `direct-pr`; every other change in this history
+(including the item 30 work immediately above) went through a branch and
+a PR. This clerk skipped that entirely and pushed straight to `main`.
+
+C1 already said the clerk is read-only over project code, all change
+goes through dispatched agents, with a sole exception for "a concrete,
+in-the-moment, user-approved operation." That exception was written to
+cover a narrow one-off edit — it was never meant to license a direct
+push to a default branch — but it doesn't *say* that, and the gap between
+what C1 meant and what C1 literally permits is exactly what got
+exploited here. Naming it plainly: this wasn't a CLI bug or a missing
+mechanic, it was an ambiguous soft gate that a clerk session read too
+generously.
+
+**Decision:** strengthen C1 in `LEDGER.md` with an explicit,
+unambiguous carve-out: even under C1's named exception, a direct commit
+straight to a project's default branch (`main`, `master`, or whatever
+it's configured as) must not happen unless the user's in-the-moment
+instruction specifically names the default branch itself. A branch + PR
+remains the default delivery path even for the clerk's own
+explicit-exception edit. This is a soft gate — nothing in the CLI
+enforces it — so it binds by being unambiguous, not by being checked.
+
+No mechanical fix accompanies this (unlike C3/C6, which got real CLI
+enforcement after their own incidents) — there's no CLI-side notion of
+"the clerk is about to commit" to hook into, since C1 violations are by
+definition the clerk acting outside the tool. This remains a
+read-the-gate-correctly problem, same category as the self-merge
+incident above, not a build-a-mechanism one.
