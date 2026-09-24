@@ -111,17 +111,39 @@ function applyMigrations(database: DatabaseSyncCtor): void {
     "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
   );
 
-  for (const migration of pending) {
-    // node:sqlite's DatabaseSync has no built-in `.transaction()` helper
-    // (unlike better-sqlite3) — drive BEGIN/COMMIT/ROLLBACK explicitly.
-    database.exec("BEGIN");
-    try {
-      database.exec(migration.sql);
-      insertMigration.run(migration.version, migration.name);
-      database.exec("COMMIT");
-    } catch (err) {
-      database.exec("ROLLBACK");
-      throw err;
+  // PRAGMA foreign_keys is a no-op while a transaction is open, so it has
+  // to be toggled here, around the whole batch, rather than inside any
+  // one migration's own SQL. Some migrations (e.g. widening a column's
+  // CHECK constraint) have no ALTER for that in SQLite and must rebuild
+  // the table — drop + recreate under its old name — which foreign key
+  // enforcement would otherwise block whenever another table holds live
+  // rows referencing it (see roadmap #89's status-enum migration). A
+  // `foreign_key_check` after re-enabling catches anything a migration
+  // actually left dangling, so this doesn't just trade a loud failure for
+  // silent corruption.
+  database.exec("PRAGMA foreign_keys = OFF");
+  try {
+    for (const migration of pending) {
+      // node:sqlite's DatabaseSync has no built-in `.transaction()` helper
+      // (unlike better-sqlite3) — drive BEGIN/COMMIT/ROLLBACK explicitly.
+      database.exec("BEGIN");
+      try {
+        database.exec(migration.sql);
+        insertMigration.run(migration.version, migration.name);
+        database.exec("COMMIT");
+      } catch (err) {
+        database.exec("ROLLBACK");
+        throw err;
+      }
     }
+  } finally {
+    database.exec("PRAGMA foreign_keys = ON");
+  }
+
+  const violations = database.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length > 0) {
+    throw new Error(
+      `migration left dangling foreign keys: ${JSON.stringify(violations)}`,
+    );
   }
 }

@@ -2,17 +2,11 @@ import { Command } from "commander";
 import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { RoadmapPriority, RoadmapRow, RoadmapStatus } from "../../db/types.js";
-import { ROADMAP_PRIORITIES } from "../../db/types.js";
+import { ROADMAP_PRIORITIES, ROADMAP_STATUSES, ROADMAP_TERMINAL_STATUSES } from "../../db/types.js";
 import { printJson, printTable } from "../format.js";
 import { getProjectByName } from "./projects.js";
 
-const VALID_STATUSES: RoadmapStatus[] = [
-  "planned",
-  "in_progress",
-  "blocked",
-  "done",
-  "dropped",
-];
+const VALID_STATUSES: RoadmapStatus[] = ROADMAP_STATUSES;
 
 export function registerRoadmapCommands(program: Command): void {
   const roadmap = program
@@ -85,7 +79,10 @@ export function registerRoadmapCommands(program: Command): void {
     .description("list roadmap items for a project")
     .requiredOption("--project <name>", "project name")
     .option("--status <status>", `filter by status (${VALID_STATUSES.join("|")})`)
-    .option("--all", "include done/dropped items (default: exclude them)")
+    .option(
+      "--all",
+      "include terminal items (merged/completed/discarded/dropped; default: exclude them)",
+    )
     .option("--json", "output as JSON")
     .action(
       (opts: { project: string; status?: string; all?: boolean; json?: boolean }) => {
@@ -100,7 +97,8 @@ export function registerRoadmapCommands(program: Command): void {
           sql += " AND status = ?";
           params.push(opts.status);
         } else if (!opts.all) {
-          sql += " AND status NOT IN ('done', 'dropped')";
+          sql += ` AND status NOT IN (${ROADMAP_TERMINAL_STATUSES.map(() => "?").join(", ")})`;
+          params.push(...ROADMAP_TERMINAL_STATUSES);
         }
         sql += " ORDER BY parent_id IS NOT NULL, id";
 

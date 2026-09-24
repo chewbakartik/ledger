@@ -1,11 +1,54 @@
 export type DeliveryMode = "direct-pr" | "local-only";
 
+// Roadmap #89 (2026-09-24): split the old bare 'done' into precise
+// terminal states, plus a non-terminal 'in_review' for "code is up,
+// waiting on a human." Non-terminal (workflow): planned, in_progress,
+// blocked, in_review. Terminal (final, drives release/cleanup): merged,
+// completed, discarded, dropped.
+//
+// 'merged' and 'discarded' both mean a PR/MR existed — merged means it
+// landed on the default branch, discarded means it was reviewed and
+// closed without merging. 'completed' is terminal for work that never
+// produces a git artifact at all (a decision made, an investigation
+// concluded). 'dropped' stays "abandoned/never attempted, no work product
+// either way."
+//
+// Observation-required constraint (same principle as gate C7 in
+// LEDGER.md): 'merged' and 'discarded' must only ever be set from an
+// actual observed check against git/the PR host (e.g. `git log
+// <default-branch> --grep`, or the MR's merged/closed state via the
+// remote's API/CLI) — never from an agent's self-reported outcome text
+// alone, and never inferred by the clerk without checking. 'in_review'
+// can be set more loosely — a PR/MR URL in an agent's outcome is
+// reasonable evidence code is up for review — since it isn't terminal.
 export type RoadmapStatus =
   | "planned"
   | "in_progress"
   | "blocked"
-  | "done"
+  | "in_review"
+  | "merged"
+  | "completed"
+  | "discarded"
   | "dropped";
+
+export const ROADMAP_STATUSES: RoadmapStatus[] = [
+  "planned",
+  "in_progress",
+  "blocked",
+  "in_review",
+  "merged",
+  "completed",
+  "discarded",
+  "dropped",
+];
+
+/** Terminal roadmap statuses: nothing further happens on the item from here. */
+export const ROADMAP_TERMINAL_STATUSES: RoadmapStatus[] = [
+  "merged",
+  "completed",
+  "discarded",
+  "dropped",
+];
 
 // Coarse triage rank for the not-done queue (DECISIONS.md, 2026-08-23,
 // user-directed): an *order*, not readiness — readiness stays with

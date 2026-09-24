@@ -2,6 +2,7 @@ import { Command } from "commander";
 import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow } from "../../db/types.js";
+import { ROADMAP_TERMINAL_STATUSES } from "../../db/types.js";
 import { HerdrError, readPane } from "../../lib/herdr.js";
 import { packageVersion } from "../../lib/package-info.js";
 import { checkForUpdate, formatUpdateNotice, type UpdateInfo } from "../../lib/update-check.js";
@@ -151,9 +152,8 @@ export function registerCatchupCommand(program: Command): void {
         events = db.prepare(eventsSql).all(...eventsParams) as unknown as EventRow[];
       }
 
-      let roadmapSql =
-        "SELECT * FROM roadmap WHERE status NOT IN ('done', 'dropped')";
-      const roadmapParams: SQLInputValue[] = [];
+      let roadmapSql = `SELECT * FROM roadmap WHERE status NOT IN (${ROADMAP_TERMINAL_STATUSES.map(() => "?").join(", ")})`;
+      const roadmapParams: SQLInputValue[] = [...ROADMAP_TERMINAL_STATUSES];
       if (project) {
         roadmapSql += " AND project_id = ?";
         roadmapParams.push(project.id);

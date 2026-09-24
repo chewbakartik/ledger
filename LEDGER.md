@@ -155,8 +155,8 @@ every agent currently `idle` together with the tail of its pane's recent
 output (A8 liveness triage — did it ask a question, hit a usage error, or
 go quiet mid-task?), every `events` row since the last time any clerk ran
 `catchup` (tracked in `first_clerk.last_seen`), and every roadmap item not
-yet `done`/`dropped`, ordered by priority `high → normal → low` (ties by
-id).
+yet in a terminal status (`merged`/`completed`/`discarded`/`dropped`),
+ordered by priority `high → normal → low` (ties by id).
 This is the entire "what's going on" operation from `DESIGN.md` — read this
 instead of any prose file, every session.
 
@@ -261,8 +261,33 @@ ledger roadmap list --project <name> [--status <status>] [--all] [--json]
 ledger roadmap update <id> [--status <status>] [--title <title>] [--description <text>] [--priority <high|normal|low>]
 ```
 
-Statuses: `planned | in_progress | blocked | done | dropped`. `--parent`
-nests a sub-item under an existing roadmap item (arbitrary depth).
+Statuses (roadmap #89, 2026-09-24 — replaces the old bare `done`):
+non-terminal (workflow) `planned | in_progress | blocked | in_review`;
+terminal (final) `merged | completed | discarded | dropped`. `in_review`
+means code is written, pushed, and a PR/MR is open — work on the item
+itself is done, it's just waiting on a human review/merge decision.
+`merged` is the terminal state for anything that produced a git artifact
+and landed on the default branch; `discarded` is the terminal state for a
+PR/MR that existed but was reviewed and rejected/closed without merging —
+distinct from `dropped` (abandoned/never attempted, no work product
+either way) because it tells you something different at a glance: effort
+was spent and a real decision was made against it. `completed` is the
+terminal state for items that never have/need a git artifact at all
+(decisions made, investigations concluded).
+
+**Observation-required constraint (same principle as gate C7):** `merged`
+and `discarded` must only ever be set from an actual observed check
+against git/the PR host (e.g. `git log <default-branch> --grep`, or
+checking the MR's merged/closed state via the remote's API/CLI) — never
+from an agent's self-reported outcome text alone, and never inferred by
+you without checking. An agent claiming "I merged it" or "MR is up" is
+not evidence of `merged`, any more than a quiet pane is evidence an agent
+is `idle` under C7. `in_review` can be set more loosely — a PR/MR URL in
+an agent's outcome is reasonable evidence code is up for review — since
+it isn't terminal.
+
+`--parent` nests a sub-item under an existing roadmap item (arbitrary
+depth).
 
 Priority: `high | normal | low`, default `normal` (also a column on every
 row: JSON output and `list`'s table both show it). It is a coarse triage
@@ -282,8 +307,9 @@ rather than deciding unilaterally or always making them write it themselves
 constraints, what's explicitly out of scope) — that's what you'll turn into
 `--task` text at dispatch time via `--roadmap-item <id>`.
 
-`roadmap list` excludes `done`/`dropped` by default; pass `--all` to see
-everything.
+`roadmap list` and `catchup`'s "Roadmap in flight" section both exclude
+all terminal statuses (`merged`/`completed`/`discarded`/`dropped`) by
+default; pass `--all` (`roadmap list` only) to see everything.
 
 ### Dispatching an agent
 
@@ -489,7 +515,9 @@ is a summary, not a copy to keep in sync by hand):
   `default_branch`, `delivery_mode`, `herdr_workspace` — the project's
   shared herdr workspace, NULL until its first dispatch).
 - `roadmap` — hierarchical (`parent_id` self-reference), `status` enum
-  `planned|in_progress|blocked|done|dropped`, `priority` enum
+  `planned|in_progress|blocked|in_review|merged|completed|discarded|dropped`
+  (see "Roadmap: turning asks into briefs" above for what each means and
+  the observation-required rule on `merged`/`discarded`), `priority` enum
   `high|normal|low` (default `normal`) — triage order for the not-done
   queue, not readiness.
 - `agents` — one row per dispatch (`project_id`, `roadmap_item_id`,
