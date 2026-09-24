@@ -35,32 +35,34 @@ export const migration0005RoadmapStatusStates: Migration = {
       updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- Backfill: every existing 'done' row must land on one of the new
-    -- terminal states, never fall through as an invalid/orphaned value.
-    -- All of them become 'completed', with no exceptions -- not 'merged'
-    -- (2026-09-24 review decision, roadmap #89 PR #21): an outcome that
-    -- merely *looks like* a PR/MR URL (the shape LEDGER.md's dispatch
-    -- contract asks agents to report -- ledger agent update <id>
-    -- --status done --outcome '<pr-url>') is not evidence the PR was
-    -- actually merged rather than opened-then-abandoned or opened-then-
-    -- closed unmerged -- there is no way to check that from historical
-    -- data alone. Claiming 'merged' for any backfilled row would
-    -- overclaim something unverified, which is exactly what the
-    -- observation-required constraint on 'merged'/'discarded' exists to
-    -- prevent. 'completed' makes no git-landed claim either way -- just
-    -- that the item is done and no longer active -- so it's the honest
-    -- default when the historical data can't actually be checked. A
-    -- clerk who has reason to believe a specific backfilled row really
-    -- did merge should re-verify it against git/the PR host and correct
-    -- it by hand, per that same observation-required rule.
+    -- Backfill (2026-09-24, second revision -- supersedes an interim
+    -- 'always completed' version): every existing 'done' row becomes
+    -- 'in_review', not a terminal state at all, and NOT auto-classified
+    -- into 'merged'/'completed'/'discarded' by any heuristic -- not from
+    -- agent outcome text (superseded: a URL-shaped outcome can't tell a
+    -- merged PR from an abandoned one), and, it turns out, not even from
+    -- checking real git state. David ran an independent audit of ~50
+    -- pre-existing 'done' items against actual git ancestry (merge-base
+    -- of the branch tip against the default branch) and found it
+    -- produces real false negatives on squash-merge workflows: a
+    -- squash-merge lands the content as a brand-new commit on the
+    -- default branch, so the original branch-tip commit never shows up
+    -- as an ancestor even though the work genuinely merged. So there is
+    -- no reliable automated way to tell merged / completed / still-open
+    -- apart for historical 'done' rows -- not from text, not from git.
+    -- 'in_review' (non-terminal) is the honest holding state: a
+    -- backfilled row stays visible in roadmap list/catchup's default
+    -- (non-terminal) view rather than silently landing in a terminal
+    -- bucket that might be wrong, until a human reviews it and picks its
+    -- real final status by hand -- the only reliable source of truth
+    -- here. Every OTHER pre-existing status (planned/in_progress/
+    -- blocked/dropped) passes through completely unchanged; only rows
+    -- literally labeled 'done' are remapped.
     INSERT INTO roadmap_new
       (id, project_id, parent_id, title, description, status, priority, created_at, updated_at)
     SELECT
       r.id, r.project_id, r.parent_id, r.title, r.description,
-      CASE
-        WHEN r.status = 'done' THEN 'completed'
-        ELSE r.status
-      END,
+      CASE WHEN r.status = 'done' THEN 'in_review' ELSE r.status END,
       r.priority, r.created_at, r.updated_at
     FROM roadmap r;
 
