@@ -35,36 +35,29 @@ export const migration0005RoadmapStatusStates: Migration = {
       updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    -- Backfill: every existing 'done' row must land on one of the two new
-    -- terminal states that actually replace it, never fall through as an
-    -- invalid/orphaned value. Heuristic (roadmap #89's spec): a 'done'
-    -- item becomes 'merged' if any agent dispatched against it recorded
-    -- an outcome that looks like a PR/MR URL -- the shape LEDGER.md's own
-    -- dispatch contract asks agents to report (ledger agent update <id>
-    -- --status done --outcome '<pr-url>').
-    -- Everything else -- including items with no agent at all, e.g. a
-    -- decision or investigation that never produced a git artifact --
-    -- falls back to 'completed', per the item's explicit "fall back to
-    -- completed if genuinely ambiguous" instruction. This is a one-time,
-    -- best-effort backfill, not a durable observation under the new
-    -- observation-required rule; a clerk who has reason to doubt a
-    -- specific backfilled row should re-verify and correct it by hand.
+    -- Backfill: every existing 'done' row must land on one of the new
+    -- terminal states, never fall through as an invalid/orphaned value.
+    -- All of them become 'completed', with no exceptions -- not 'merged'
+    -- (2026-09-24 review decision, roadmap #89 PR #21): an outcome that
+    -- merely *looks like* a PR/MR URL (the shape LEDGER.md's dispatch
+    -- contract asks agents to report -- ledger agent update <id>
+    -- --status done --outcome '<pr-url>') is not evidence the PR was
+    -- actually merged rather than opened-then-abandoned or opened-then-
+    -- closed unmerged -- there is no way to check that from historical
+    -- data alone. Claiming 'merged' for any backfilled row would
+    -- overclaim something unverified, which is exactly what the
+    -- observation-required constraint on 'merged'/'discarded' exists to
+    -- prevent. 'completed' makes no git-landed claim either way -- just
+    -- that the item is done and no longer active -- so it's the honest
+    -- default when the historical data can't actually be checked. A
+    -- clerk who has reason to believe a specific backfilled row really
+    -- did merge should re-verify it against git/the PR host and correct
+    -- it by hand, per that same observation-required rule.
     INSERT INTO roadmap_new
       (id, project_id, parent_id, title, description, status, priority, created_at, updated_at)
     SELECT
       r.id, r.project_id, r.parent_id, r.title, r.description,
       CASE
-        WHEN r.status = 'done' AND EXISTS (
-          SELECT 1 FROM agents a
-          WHERE a.roadmap_item_id = r.id
-            AND a.outcome IS NOT NULL
-            AND (
-              a.outcome LIKE '%/pull/%'
-              OR a.outcome LIKE '%/pulls/%'
-              OR a.outcome LIKE '%/merge_requests/%'
-              OR a.outcome LIKE '%/pr/%'
-            )
-        ) THEN 'merged'
         WHEN r.status = 'done' THEN 'completed'
         ELSE r.status
       END,
