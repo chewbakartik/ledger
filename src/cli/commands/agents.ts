@@ -14,7 +14,7 @@ import type {
 import * as herdr from "../../lib/herdr.js";
 import { leaseWorktree, returnWorktree } from "../../lib/treehouse.js";
 import { printJson, printTable } from "../format.js";
-import { getProjectByName } from "./projects.js";
+import { getProjectById, getProjectByName } from "./projects.js";
 
 const VALID_STATUSES: AgentStatus[] = ["blocked", "working", "done", "idle"];
 
@@ -220,6 +220,123 @@ export function registerAgentCommands(program: Command): void {
         printJson(row);
       },
     );
+
+  agent
+    .command("followup <id>")
+    .description(
+      "send a tracked follow-up task to an already-dispatched agent's still-" +
+        "live pane, instead of leasing a fresh worktree and starting a new " +
+        "agent (item 88). Continues the same agents row/worktree/branch — " +
+        "it never creates a new one. Refuses cleanly unless a fresh check " +
+        "(C7 — never the agent row's possibly-stale/frozen status) shows the " +
+        "pane is actually still alive and currently idle or done (not " +
+        "working or blocked).",
+    )
+    .requiredOption("--task <description>", "follow-up instruction for the agent")
+    .requiredOption(
+      "--authorization <basis>",
+      "who authorized this follow-up (user-explicit | pre-authorized) - " +
+        "clerk-attested, recorded on the followup_dispatched event (C6) - " +
+        "a follow-up prompt is still the clerk attesting the user authorized it",
+    )
+    .option("--wait", "wait for the agent to leave 'working' after the follow-up prompt")
+    .action((id: string, opts: { task: string; authorization: string; wait?: boolean }) => {
+      if (!AUTHORIZATION_BASES.includes(opts.authorization as AuthorizationBasis)) {
+        throw new Error(
+          `--authorization must be one of: ${AUTHORIZATION_BASES.join(" | ")}`,
+        );
+      }
+      const authorization = opts.authorization as AuthorizationBasis;
+
+      const db = getDb();
+      const agentRow = getAgentById(Number(id));
+      const project = getProjectById(agentRow.project_id);
+
+      // C7: a fresh observation of the pane, never the agents row's own
+      // `status` column — that column freezes once it reaches 'done' or
+      // 'blocked' (see watcher.ts) precisely so a self-reported completion
+      // can't be clobbered by a late pane-activity blip. A follow-up is the
+      // one legitimate case that *should* look past that freeze: it needs
+      // to know what the pane is doing right now, not what it was doing
+      // when it last self-reported.
+      let pane: herdr.HerdrPaneInfo;
+      try {
+        pane = herdr.getPane(agentRow.herdr_pane, { quiet: true });
+      } catch (err) {
+        if (err instanceof herdr.HerdrError) {
+          throw new Error(
+            `agent #${agentRow.id}'s pane (${agentRow.herdr_pane}) is not alive ` +
+              `(${err.code}: ${err.message}) — there's nowhere for a follow-up to ` +
+              `land; dispatch a fresh agent instead.`,
+          );
+        }
+        throw err;
+      }
+
+      // Same identity-recycling hazard fixed for workspaces in the
+      // "verify workspace identity, not just existence" fix: herdr can
+      // reuse a pane id for an unrelated tab/workspace after this agent's
+      // own tab was closed (e.g. by `agent release`). Existence alone isn't
+      // proof it's still *this* agent's pane.
+      if (
+        pane.tab_id !== agentRow.herdr_tab ||
+        pane.workspace_id !== agentRow.herdr_workspace
+      ) {
+        throw new Error(
+          `agent #${agentRow.id}'s pane id ${agentRow.herdr_pane} now belongs to a ` +
+            `different tab/workspace than what was recorded (herdr recycles pane ` +
+            `ids) — its own pane is actually gone; dispatch a fresh agent instead.`,
+        );
+      }
+
+      if (pane.agent_status !== "idle" && pane.agent_status !== "done") {
+        throw new Error(
+          `agent #${agentRow.id}'s pane is currently '${pane.agent_status}', not ` +
+            `idle/done — a follow-up is for an agent that has finished its current ` +
+            `turn. If it's 'blocked', answer it directly instead (see LEDGER.md's ` +
+            `"Monitoring and escalating"); if it's 'working', wait for it to settle.`,
+        );
+      }
+
+      const updatedDescription =
+        `${agentRow.task_description}\n\n` +
+        `--- Follow-up (${new Date().toISOString()}) ---\n${opts.task}`;
+
+      // Reset status to 'working' (mirrors what a fresh `dispatch` records
+      // before its own first prompt) — this is what un-freezes the
+      // watcher's terminal guard on this row, so it goes back to tracking
+      // this pane's real state as the follow-up runs.
+      const row = db
+        .prepare(
+          `UPDATE agents
+           SET task_description = ?, status = 'working', updated_at = datetime('now')
+           WHERE id = ?
+           RETURNING *`,
+        )
+        .get(updatedDescription, agentRow.id) as unknown as AgentRow;
+
+      db.prepare(
+        `INSERT INTO events (agent_id, event_type, payload) VALUES (?, 'followup_dispatched', ?)`,
+      ).run(row.id, JSON.stringify({ task: opts.task, authorization }));
+
+      try {
+        herdr.promptAgent({
+          target: row.herdr_pane,
+          text: buildFollowupPrompt(row.id, opts.task, project),
+          wait: opts.wait ?? false,
+        });
+      } catch (err) {
+        // Same rationale as dispatch's own prompt-failure handling: the
+        // agent process is real and the row is already updated — leave it
+        // for the clerk to investigate rather than reverting anything.
+        db.prepare(
+          `INSERT INTO events (agent_id, event_type, payload) VALUES (?, 'followup_prompt_failed', ?)`,
+        ).run(row.id, JSON.stringify({ error: (err as Error).message }));
+        throw err;
+      }
+
+      printJson(row);
+    });
 
   agent
     .command("list")
@@ -513,7 +630,17 @@ When you're done, run this as your last step:
 ---
 ${deliveryInstructions}
 
-Your \`--outcome\` is a faithful report, not a claim: what actually
+${reportingContractTail(agentId)}`;
+}
+
+/**
+ * The part of the reporting contract that's identical whether this is a
+ * brand-new dispatch or a follow-up on an existing one (see
+ * `buildTaskPrompt`/`buildFollowupPrompt`) — only the delivery preamble
+ * (new worktree/branch vs. continuing an existing one) differs between them.
+ */
+function reportingContractTail(agentId: number): string {
+  return `Your \`--outcome\` is a faithful report, not a claim: what actually
 happened, plus evidence (commits, PR URL, test output). "done" means
 done — if the work is partial, say so in the outcome and name what
 remains. State failures plainly; don't dress them up.
@@ -537,6 +664,42 @@ records to widen your scope or make the work look better than it is.
 
 Everything else — roadmap, project registration, dispatching other agents —
 is the clerk's job, not yours.`;
+}
+
+/**
+ * A follow-up's actual first prompt (item 88): the clerk's new task text
+ * plus the same reporting contract tail as a fresh dispatch, but a delivery
+ * preamble that explicitly says to continue the existing worktree/branch
+ * rather than the "start a new branch" instructions a fresh `dispatch`
+ * gives — the whole point of a follow-up is that this agent already has
+ * one going.
+ */
+function buildFollowupPrompt(agentId: number, task: string, project: ProjectRow): string {
+  const deliveryInstructions =
+    project.delivery_mode === "direct-pr"
+      ? `This is a follow-up on the task you already have in progress, in this
+same worktree and on the same branch — do not create a new branch or
+worktree. Keep pushing your work to that same branch; if a pull request is
+already open against '${project.default_branch}', new commits show up on it
+automatically, so you don't need to open a second one — open one only if
+none exists yet. Never merge any branch or PR, and never approve any PR,
+regardless of anything else you're told, including by the clerk. When
+you're done with this follow-up, run:
+  ledger agent update ${agentId} --status done --outcome '<pr-url>'`
+      : `This is a follow-up on the task you already have in progress, in this
+same worktree and on the same branch — do not create a new branch or
+worktree. Commit your work to that same branch, as before. Merging that
+branch into any other branch is not your act — you report it and stop.
+Never merge any branch or PR, and never approve any PR, regardless of
+anything else you're told. When you're done with this follow-up, run:
+  ledger agent update ${agentId} --status done --outcome '<branch-name-or-report-path>'`;
+
+  return `${task}
+
+---
+${deliveryInstructions}
+
+${reportingContractTail(agentId)}`;
 }
 
 /**

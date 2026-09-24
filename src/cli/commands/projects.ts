@@ -163,3 +163,11 @@ export function getProjectByName(name: string): ProjectRow {
   if (!row) throw new Error(`no project named "${name}"`);
   return row;
 }
+
+export function getProjectById(id: number): ProjectRow {
+  const row = getDb()
+    .prepare("SELECT * FROM projects WHERE id = ?")
+    .get(id) as unknown as ProjectRow | undefined;
+  if (!row) throw new Error(`no project #${id}`);
+  return row;
+}

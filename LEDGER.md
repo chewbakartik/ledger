@@ -170,6 +170,18 @@ repeating the same failure under every idle agent. `--json` includes the
 same data as an `idle` array (`agent`, `pane_tail`, `pane_read_error`) plus
 top-level `idle_pane_read_note` for the whole-socket case.
 
+`catchup` also lists every `done` agent whose herdr pane is still actually
+alive (item 88) — a real candidate for `agent followup` below, distinct from
+a `done` agent whose worktree/pane is genuinely gone. This is a fresh
+per-agent `herdr pane get`, same A8-style observation idle pane tails
+already use, not a new `agents.status` value: a `done` agent whose pane
+resolves shows up here; one that doesn't (pane/tab/workspace closed) is
+silently excluded, not reported as an error, per C7. `--json`'s
+`done_with_live_pane` array carries `{agent, herdr_agent_status}` per entry;
+`done_pane_read_note` mirrors `idle_pane_read_note` for the whole-socket-down
+case. Governed by the same `--idle-pane-lines` flag as idle tails — `0`
+disables both.
+
 `catchup` also checks (item 42) whether a newer `@devwithdavid/ledger` npm
 version exists — a plain-text notice after the normal output in
 human-readable mode, or the top-level `update_available` JSON key
@@ -381,6 +393,42 @@ a roadmap (small, well-scoped context per agent).
 From here, **you do nothing further** to track state — the herdr watcher
 plugin keeps `agents.status` and `events` current automatically as that
 pane's agent state changes.
+
+### Following up with an already-dispatched agent (item 88)
+
+```sh
+ledger agent followup <id> --task "<description>" --authorization <user-explicit|pre-authorized>
+```
+
+For a small iterative fixup on work an agent already did — not a new,
+separate concern — this continues that same `agents` row/worktree/branch
+instead of leasing a whole new worktree and starting a fresh agent that has
+to reconstruct context from git history. `catchup`'s "Done agents with a
+live pane" section (above) is where you'll usually spot a candidate: a
+`done` agent whose pane is still actually alive. `--authorization` works
+exactly like `dispatch`'s (C6) — a follow-up prompt is still you attesting
+the user authorized it — and is recorded on a new `followup_dispatched`
+event on the *same* agent row, never a second disconnected one.
+
+Before sending anything, this re-checks the pane fresh (C7 — never the
+agent row's own possibly-stale/frozen `status` column) and refuses cleanly
+if: the pane doesn't resolve at all (closed, worktree already released);
+its `tab`/`workspace` no longer match what's recorded (herdr recycled the
+pane id to something else — the same identity hazard fixed for workspace
+reuse, applied here to panes); or its live status is `working` (still mid-
+turn — wait) or `blocked` (that's the existing "answer it directly" path
+under "Monitoring and escalating" below, not this command).
+
+On success: `task_description` gets the new instruction appended under a
+`--- Follow-up (<timestamp>) ---` marker (so the full history is visible via
+`agent get`, not just buried in `events`), `status` resets to `working`
+(this is what un-freezes the watcher's terminal guard so it starts tracking
+this pane's state again — see `DECISIONS.md`), and the task is delivered
+with the same reporting contract as a fresh dispatch, except told to
+continue the existing worktree/branch rather than start a new one. If the
+final prompt delivery itself fails, the row is kept with a
+`followup_prompt_failed` event, same rationale as `dispatch_prompt_failed`
+above.
 
 Other agent commands:
 

@@ -108,7 +108,10 @@ export interface HerdrPaneInfo {
   pane_id: string;
   workspace_id: string;
   tab_id: string;
-  agent_status: HerdrAgentStatus;
+  // Confirmed live: a plain shell pane (no agent detected) reports
+  // "unknown", not one of ledger's own four statuses — same widening
+  // watcher.ts already applies to this same field (PaneAgentStatusChangedData).
+  agent_status: HerdrAgentStatus | "unknown";
   cwd: string | null;
 }
 
@@ -158,6 +161,22 @@ export function getWorkspace(
 
 export function renameWorkspace(workspaceId: string, label: string): void {
   runHerdr(["workspace", "rename", workspaceId, label]);
+}
+
+/**
+ * Fetches a pane's current info, including its live `agent_status` — the
+ * fresh, C7-style observation `agent followup` checks before sending more
+ * work to an already-dispatched agent's pane (see agents.ts). Throws
+ * HerdrError (e.g. `pane_not_found`) when the id doesn't exist. Pass `quiet`
+ * when a missing pane is an expected, handled outcome (same rationale as
+ * `getWorkspace`'s `quiet`).
+ */
+export function getPane(paneId: string, opts?: { quiet?: boolean }): HerdrPaneInfo {
+  const result = runHerdr<{ type: string; pane: HerdrPaneInfo }>(
+    ["pane", "get", paneId],
+    opts,
+  );
+  return result.pane;
 }
 
 export interface HerdrTabCreateResult {

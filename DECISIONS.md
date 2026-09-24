@@ -1288,3 +1288,101 @@ way (the spec's explicit requirement). `clerk claim` has no `--json` mode
 at all, so its notice is a plain-text line printed after the claim's JSON
 row — mixed output, but the spec calls this out as acceptable specifically
 because `claim` has nothing to keep parseable.
+
+## `ledger agent followup`: continue a still-live agent, no new `AgentStatus` — 2026-09-24 (item 88)
+
+**Problem, confirmed live (2026-09-24):** a dispatched agent reaching
+`agents.status = 'done'` (self-reported, outcome recorded) doesn't mean its
+herdr pane exited — the coding-agent process is usually still sitting there,
+idle, holding all the context it built up. The only tool for sending it more
+work was `agent dispatch`, which always leases a brand-new treehouse
+worktree, so every small follow-up (a CSS tweak, a quick correction after
+live testing) paid the full cost of a cold worktree + fresh docker stack +
+an agent re-deriving context from git history, discarding a warm agent that
+was right there.
+
+**Decision: no new `AgentStatus` value, no migration.** Item 88's own text
+left this as an explicit choice ("a genuinely new status... or whether
+`catchup` should just surface 'done agents with a still-live pane' as its
+own section (cheaper, no migration) — your call"). Took the cheaper path.
+A new status (e.g. `awaiting_verification`) would have meant teaching it to
+every existing consumer of `agents.status`: the watcher's terminal-state
+guard (`watcher.ts`), `agent dispatch`'s duplicate-live check, `agent
+release`, and every hand-read of the column — for a distinction (`done` +
+pane still alive vs. `done` + pane gone) that's fully derivable at read time
+from a single `herdr pane get`, the same fresh-observation move `catchup`
+already does for idle-agent pane tails (A8). `catchup` now runs the same
+check for every `status = 'done'` agent and lists only the ones whose pane
+still resolves — a real HerdrError (`pane_not_found`, tab/workspace gone)
+just means that `done` agent is genuinely finished and is silently excluded,
+not reported as an error; only a non-HerdrError failure (herdr socket itself
+unreachable) becomes a one-time note, mirroring `readIdlePanes`'s existing
+handling. Gated behind the same `--idle-pane-lines` flag as idle-pane
+reads (0 now disables both) rather than a second flag, since both are the
+same "skip all herdr pane calls" opt-out.
+
+**`ledger agent followup <id> --task <text> --authorization <basis>`**
+(mirrors gate C6 exactly — an in-the-moment green light or a standing
+pre-authorization, clerk-attested, recorded on a new `followup_dispatched`
+event) continues the *same* `agents` row rather than creating a second,
+disconnected one — this is a continuation of one unit of work, not a new
+one. It never touches `agents.authorization_basis` (that column is the
+*original* dispatch's attestation); the follow-up's own basis lives in the
+`followup_dispatched` event payload, same as `agent update`'s `manual_update`
+event doesn't touch it either.
+
+Refuses cleanly (no mutation) in three cases, checked against a *fresh*
+`herdr pane get` — never the agents row's own `status` column, which is
+exactly the field that can't be trusted here (see below):
+1. The pane doesn't resolve at all (`HerdrError`, e.g. `pane_not_found`) —
+   genuinely gone; dispatch fresh instead.
+2. The pane resolves but its `tab_id`/`workspace_id` don't match what's on
+   the agent row — the same id-recycling hazard the "verify workspace
+   identity, not just existence" fix caught for workspace reuse, applied to
+   panes: herdr can hand out a closed agent's old pane id to an unrelated
+   tab.
+3. The pane's live `agent_status` is `working` or `blocked`, not `idle`/
+   `done` — a follow-up is for an agent that has finished its current turn;
+   `blocked` still goes through the existing direct-`herdr agent prompt`
+   path in "Monitoring and escalating" (unchanged by this item — a
+   different, already-documented case), and `working` just needs the clerk
+   to wait.
+
+All three checks verified live against a real herdr pane in a sandboxed
+`$LEDGER_HOME` (never the real board): `pane_not_found` on a bogus pane id,
+a recorded `herdr_tab` mismatch, and `herdr pane report-agent --state idle`
+to simulate a live idle pane. The happy path was also run against that same
+simulated idle pane end-to-end: `task_description` gets the new instruction
+appended under a `--- Follow-up (<timestamp>) ---` marker (full history
+stays visible via `agent get`, not just buried in `events`), `status` resets
+to `'working'`, a `followup_dispatched` event is recorded, and only then is
+`herdr.promptAgent` called. The `status` reset to `'working'` is what fixes
+the actual mechanism gap underlying item 88's part 2: `watcher.ts` treats
+`done`/`blocked` as sticky-terminal for a row specifically so a late pane
+blip can't clobber a just-recorded self-report (see "Watcher bug" above) —
+but that freeze means a `done` row's status would never move again even
+after a legitimate follow-up revives the pane, unless something explicitly
+un-freezes it first. `agent followup` is that explicit act, mirroring how a
+fresh `dispatch` itself inserts its row already `status = 'working'` before
+ever prompting.
+
+The prompt text itself (`buildFollowupPrompt`, `agents.ts`) reuses the exact
+same reporting-contract tail as a fresh dispatch (`reportingContractTail`,
+extracted from `buildTaskPrompt` — same faithful-outcome/blocked-request/
+scope-boundary text, now shared instead of duplicated) but swaps the
+delivery preamble: "continue this same worktree/branch," not "work on a new
+branch" — a follow-up that told the agent to branch fresh would contradict
+the entire point of not re-leasing a worktree. `herdr agent prompt`'s own
+prompt-failure handling mirrors `dispatch`'s: the row is already updated by
+the time a prompt-delivery failure could happen, so it's left in place
+(`status = 'working'`) with a `followup_prompt_failed` event for the clerk
+to investigate, rather than reverted.
+
+**Not done / explicitly out of scope:** actually starting a real coding-agent
+process in the test pane (via `herdr agent start`) to exercise
+`herdr.promptAgent`'s success path end-to-end — `report-agent --state idle`
+proved the gate logic and DB mutations correctly, and `promptAgent` itself
+is unmodified, already-proven code reused verbatim from `dispatch`; spinning
+a real agent process just to re-prove herdr's own prompt mechanics wasn't
+worth the resource cost. `npm run build` passes; no test suite exists in
+this project.

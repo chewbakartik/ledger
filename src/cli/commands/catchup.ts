@@ -3,7 +3,7 @@ import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow } from "../../db/types.js";
 import { ROADMAP_TERMINAL_STATUSES } from "../../db/types.js";
-import { HerdrError, readPane } from "../../lib/herdr.js";
+import { getPane, HerdrError, readPane } from "../../lib/herdr.js";
 import { packageVersion } from "../../lib/package-info.js";
 import { checkForUpdate, formatUpdateNotice, type UpdateInfo } from "../../lib/update-check.js";
 import { printJson } from "../format.js";
@@ -63,6 +63,53 @@ function readIdlePanes(
   return { entries, globalNote };
 }
 
+interface DoneLiveEntry {
+  agent: AgentRow;
+  /** The pane's actual, freshly-observed herdr agent_status (item 88: a `done` agents row's own status is frozen — see watcher.ts — so this is the only way to tell "genuinely finished, pane/worktree gone" from "reported done, but the pane is still sitting there idle"). */
+  herdr_agent_status: string;
+}
+
+/**
+ * Item 88: a dispatched agent reaching `done` doesn't mean its herdr pane
+ * actually exited — it often just went idle, still holding all the context
+ * it built up, and a follow-up (`ledger agent followup`) can pick up there
+ * instead of leasing a whole new worktree. Rather than a new schema status
+ * to track this (a real migration, and another state every consumer of
+ * `agents.status` — dispatch's duplicate-live check, the watcher's terminal
+ * guard, `agent release` — would need to learn about), this does the fresh
+ * per-agent check catch-up already does for idle panes' tails, and surfaces
+ * only the ones that are actually still alive.
+ *
+ * Never throws — same C7 rationale as `readIdlePanes`: a `pane_not_found`
+ * (or any other structured HerdrError) just means this particular done
+ * agent's pane is genuinely gone, which isn't newsworthy — it's excluded,
+ * not reported as an error. Only a non-HerdrError failure (herdr socket
+ * itself unreachable) is systemic: recorded once as a global note, and no
+ * further pane reads are attempted.
+ */
+function findDoneAgentsWithLivePane(
+  agents: AgentRow[],
+): { entries: DoneLiveEntry[]; globalNote: string | null } {
+  const entries: DoneLiveEntry[] = [];
+  let globalNote: string | null = null;
+
+  for (const agent of agents) {
+    if (globalNote) break;
+    try {
+      const pane = getPane(agent.herdr_pane, { quiet: true });
+      entries.push({ agent, herdr_agent_status: pane.agent_status });
+    } catch (err) {
+      if (err instanceof HerdrError) {
+        continue;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      globalNote = `herdr pane reads unavailable: ${message}`;
+    }
+  }
+
+  return { entries, globalNote };
+}
+
 const IDLE_LABEL_MAX_LENGTH = 80;
 
 /** First line of a (possibly long, multi-paragraph) task description, truncated. */
@@ -94,7 +141,8 @@ export function registerCatchupCommand(program: Command): void {
     .option("--project <name>", "scope roadmap (and optionally agents) to one project")
     .option(
       "--idle-pane-lines <n>",
-      "lines of pane tail to show per idle agent (A8 liveness triage); 0 disables pane reads",
+      "lines of pane tail to show per idle agent (A8 liveness triage); 0 disables " +
+        "all pane reads, including idle tails and the done-agent liveness check (item 88)",
       parseIdlePaneLinesOpt,
       IDLE_PANE_TAIL_DEFAULT_LINES,
     )
@@ -139,6 +187,23 @@ export function registerCatchupCommand(program: Command): void {
               globalNote: null,
             };
 
+      // Item 88: surface `done` agents whose pane is still actually alive —
+      // a real follow-up candidate via `ledger agent followup`, distinct
+      // from a `done` agent whose worktree/pane is genuinely gone. Gated on
+      // the same flag as idle pane tails, for a single "no herdr socket
+      // calls" opt-out.
+      let doneSql = "SELECT * FROM agents WHERE status = 'done'";
+      const doneParams: SQLInputValue[] = [];
+      if (project) {
+        doneSql += " AND project_id = ?";
+        doneParams.push(project.id);
+      }
+      const doneAgents = db.prepare(doneSql).all(...doneParams) as unknown as AgentRow[];
+      const { entries: doneWithLivePane, globalNote: donePaneGlobalNote } =
+        opts.idlePaneLines > 0
+          ? findDoneAgentsWithLivePane(doneAgents)
+          : { entries: [], globalNote: null };
+
       let events: EventRow[] = [];
       if (since) {
         let eventsSql = "SELECT * FROM events WHERE created_at > ?";
@@ -182,6 +247,8 @@ export function registerCatchupCommand(program: Command): void {
         blocked,
         idle,
         idle_pane_read_note: idlePaneGlobalNote,
+        done_with_live_pane: doneWithLivePane,
+        done_pane_read_note: donePaneGlobalNote,
         events,
         roadmap,
         update_available: updateAvailable,
@@ -213,6 +280,17 @@ export function registerCatchupCommand(program: Command): void {
         } else if (pane_read_error && !idlePaneGlobalNote) {
           console.log(`      pane unreadable: ${pane_read_error}`);
         }
+      }
+      console.log(`\nDone agents with a live pane (${doneWithLivePane.length}):`);
+      if (donePaneGlobalNote) {
+        console.log(`  (${donePaneGlobalNote})`);
+      }
+      for (const { agent, herdr_agent_status } of doneWithLivePane) {
+        console.log(
+          `  #${agent.id} [${agent.project_id}] pane=${agent.herdr_pane} ` +
+            `herdr_status=${herdr_agent_status} — ${shortLabel(agent.task_description)} ` +
+            `(follow-up candidate: ledger agent followup ${agent.id} --task ... --authorization ...)`,
+        );
       }
       console.log(`\nEvents (${events.length}):`);
       for (const e of events) {
