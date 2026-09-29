@@ -41,11 +41,13 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 bundles older.
-      - name: Upgrade npm for OIDC trusted publishing
+      # Staged publishing via trusted publishing needs npm >= 11.15.0; Node 22
+      # bundles older. Install latest 11.x, then hard-fail if it is too old.
+      - name: Upgrade npm for OIDC staged publishing
         run: |
-          npm install -g npm@^11.5.1
+          npm install -g npm@^11.15.0
           npm --version
+          node -e "const [a,b]=process.argv[1].split('.').map(Number); if (a<11 || (a===11 && b<15)) { console.error('npm >= 11.15.0 required, got '+process.argv[1]); process.exit(1) }" "$(npm --version)"
 
       # Build + test first: a failure here means nothing is committed, tagged,
       # pushed, or published.
@@ -83,10 +85,16 @@ jobs:
       - name: Push commit and tag
         run: git push --atomic origin HEAD:main "v${{ steps.version.outputs.version }}"
 
-      # No NPM_TOKEN: authentication is OIDC via the npm Trusted Publisher config.
-      - name: Publish to npm
-        run: npm publish --access public
+      # STAGES the package; it is NOT live on the registry after this step.
+      # No 2FA needed here. No NPM_TOKEN: auth is OIDC via the npm Trusted
+      # Publisher config (restricted to staged publishing).
+      # A human must then approve it with 2FA: `npm stage approve <stage-id>`
+      # or npmjs.com -> Staged Packages -> Approve.
+      - name: Stage package on npm (awaiting approval)
+        run: npm stage publish --access public
 
+      # Note: this record is created at staging time; the npm package only goes
+      # live once approved.
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -95,3 +103,11 @@ jobs:
             --title "v${{ steps.version.outputs.version }}" \
             --generate-notes \
             --verify-tag
+
+      - name: Summary - staged, awaiting approval
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          MSG="@devwithdavid/ledger v${VERSION} is STAGED for release, not yet live. Approve at npmjs.com (Staged Packages tab) or via \`npm stage approve <stage-id>\` (requires 2FA)."
+          echo "::notice title=Staged, awaiting your approval::${MSG}"
+          echo "### Staged for release - approval required" >> "$GITHUB_STEP_SUMMARY"
+          echo "${MSG}" >> "$GITHUB_STEP_SUMMARY"
