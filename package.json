@@ -20,7 +20,8 @@
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch",
     "dev": "tsc -p tsconfig.json && node dist/cli/index.js",
-    "prepare": "tsc -p tsconfig.json"
+    "prepare": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test dist/lib/*.test.js"
   },
   "engines": {
     "node": ">=22.13.0"

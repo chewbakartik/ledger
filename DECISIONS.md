@@ -1386,3 +1386,16 @@ is unmodified, already-proven code reused verbatim from `dispatch`; spinning
 a real agent process just to re-prove herdr's own prompt mechanics wasn't
 worth the resource cost. `npm run build` passes; no test suite exists in
 this project.
+
+## Dispatch pre-trusts the worktree in ~/.claude.json (item 37)
+
+Supersedes the "rejected pre-writing `hasTrustDialogAccepted`" call above.
+Claude Code has no official bypass (`--dangerously-skip-permissions` and
+`--permission-mode bypassPermissions` still show the dialog), and the
+pane-text scraping (`dismissClaudeTrustDialog`) failed in practice — agents
+exited before engaging. Dispatch now calls `trustClaudeWorktree` (src/lib/
+claude-trust.ts) before `herdr agent start`: atomic temp+rename write,
+file mode preserved (0600 if created), all other keys kept, malformed file
+refused rather than overwritten. Also: on `agent_pane_busy`, `startAgent`
+now checks whether herdr already sees an agent on the pane (an earlier
+attempt launched it) and waits for idle instead of failing.

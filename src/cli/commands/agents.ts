@@ -11,6 +11,7 @@ import type {
   CodingAgentKind,
   ProjectRow,
 } from "../../db/types.js";
+import { trustClaudeWorktree } from "../../lib/claude-trust.js";
 import * as herdr from "../../lib/herdr.js";
 import { leaseWorktree, returnWorktree } from "../../lib/treehouse.js";
 import { printJson, printTable } from "../format.js";
@@ -129,13 +130,10 @@ export function registerAgentCommands(program: Command): void {
         let pane: DispatchPane | undefined;
         try {
           pane = openDispatchPane(project, worktreePath, label);
-          // For kind === "claude", herdr.startAgent itself detects and
-          // dismisses Claude Code's one-time "do you trust this folder?"
-          // dialog when it blocks readiness (see its docstring in
-          // herdr.ts and DECISIONS.md) — a blind post-hoc Enter here
-          // cannot work, since `startAgent` only returns successfully
-          // once the agent is actually ready, and that success never
-          // comes while the dialog is still up.
+          // Claude Code's one-time "trust this folder?" dialog would block
+          // the agent forever in a fresh worktree; pre-accept it instead of
+          // scraping the pane (see claude-trust.ts).
+          if (kind === "claude") trustClaudeWorktree(worktreePath);
           herdr.startAgent({
             name: label,
             kind,
