@@ -259,10 +259,17 @@ export function registerCatchupCommand(program: Command): void {
         return;
       }
 
+      const projectNames = new Map(
+        (db.prepare("SELECT id, name FROM projects").all() as unknown as { id: number; name: string }[]).map(
+          (p) => [p.id, p.name] as const,
+        ),
+      );
+      const projectLabel = (id: number) => projectNames.get(id) ?? String(id);
+
       console.log(`Since: ${since ?? "(no prior catchup — showing full roadmap only)"}`);
       console.log(`\nBlocked (${blocked.length}):`);
       for (const a of blocked) {
-        console.log(`  #${a.id} [${a.project_id}] ${a.task_description}`);
+        console.log(`  #${a.id} [${projectLabel(a.project_id)}] ${a.task_description}`);
       }
       console.log(`\nIdle (${idle.length}):`);
       if (idlePaneGlobalNote) {
@@ -270,7 +277,7 @@ export function registerCatchupCommand(program: Command): void {
       }
       for (const { agent, pane_tail, pane_read_error } of idle) {
         console.log(
-          `  #${agent.id} [${agent.project_id}] pane=${agent.herdr_pane} ` +
+          `  #${agent.id} [${projectLabel(agent.project_id)}] pane=${agent.herdr_pane} ` +
             shortLabel(agent.task_description),
         );
         if (pane_tail !== null) {
@@ -287,7 +294,7 @@ export function registerCatchupCommand(program: Command): void {
       }
       for (const { agent, herdr_agent_status } of doneWithLivePane) {
         console.log(
-          `  #${agent.id} [${agent.project_id}] pane=${agent.herdr_pane} ` +
+          `  #${agent.id} [${projectLabel(agent.project_id)}] pane=${agent.herdr_pane} ` +
             `herdr_status=${herdr_agent_status} — ${shortLabel(agent.task_description)} ` +
             `(follow-up candidate: ledger agent followup ${agent.id} --task ... --authorization ...)`,
         );
@@ -299,7 +306,7 @@ export function registerCatchupCommand(program: Command): void {
       console.log(`\nRoadmap in flight (${roadmap.length}):`);
       for (const r of roadmap) {
         const indent = r.parent_id ? "    " : "  ";
-        console.log(`${indent}#${r.id} [${r.status}] ${r.title}`);
+        console.log(`${indent}#${r.id} [${projectLabel(r.project_id)}] [${r.status}] ${r.title}`);
       }
 
       if (updateAvailable) console.log(`\n${formatUpdateNotice(updateAvailable)}`);
