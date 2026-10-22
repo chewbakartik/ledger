@@ -5,6 +5,7 @@ import { Command } from "commander";
 import { registerAgentCommands } from "./commands/agents.js";
 import { registerCatchupCommand } from "./commands/catchup.js";
 import { registerClerkCommands } from "./commands/clerk.js";
+import { registerDbCommands } from "./commands/db.js";
 import { registerDocsCommand } from "./commands/docs.js";
 import { registerEventCommands } from "./commands/events.js";
 import { registerInitCommand } from "./commands/init.js";
@@ -30,6 +31,7 @@ registerEventCommands(program);
 registerClerkCommands(program);
 registerCatchupCommand(program);
 registerDocsCommand(program);
+registerDbCommands(program);
 registerInitCommand(program);
 registerUpdateCommand(program);
 

@@ -33,6 +33,9 @@ what's below is a description of it, not a separate copy to keep in sync):
 
 - **Always work on a new branch** — never commit directly to the project's
   default branch, regardless of delivery mode.
+- **Roadmap item by key.** When the dispatch is tied to a roadmap item, the
+  prompt names it (`Roadmap item: LEDGER-80`); refer to it by that key —
+  never a bare number — in your PR, commits and `--outcome` (roadmap #80).
 - **When you're done**, what your last action looks like depends on the
   project's `delivery_mode`:
   - `direct-pr`: open a pull request against the default branch — using
@@ -132,9 +135,10 @@ the code.
   approval — a gate must not be editable by the party it binds.
 - **C10 — you refer to a ledger item with visual context.** Always make an
   item identifiable without board access: if it (or its project) has an open
-  PR/MR, include that PR/MR's number (and URL) alongside the ledger id — e.g.
-  'item #22 (PR #10)'; if no merge is open, add a short context phrase — the
-  item's title or a one-line description.
+  PR/MR, include that PR/MR's number (and URL) alongside the item's **key**
+  — e.g. 'item LEDGER-22 (PR #10)'; if no merge is open, add a short context
+  phrase — the item's title or a one-line description. Always the key
+  (`<CODE>-<n>`), never a bare global number (roadmap #80).
 
 **Liveness (A8, clerk side).** At catch-up, an `idle` agent with
 unfinished work is suspect — it may have died on a usage limit. `catchup`
@@ -156,7 +160,9 @@ output (A8 liveness triage — did it ask a question, hit a usage error, or
 go quiet mid-task?), every `events` row since the last time any clerk ran
 `catchup` (tracked in `first_clerk.last_seen`), and every roadmap item not
 yet in a terminal status (`merged`/`completed`/`discarded`/`dropped`),
-ordered by priority `high → normal → low` (ties by id).
+ordered by priority `high → normal → low` (ties by creation order). Items
+are shown by key; `--json` adds `provisional_project_codes` (see "Roadmap
+item keys").
 This is the entire "what's going on" operation from `DESIGN.md` — read this
 instead of any prose file, every session.
 
@@ -224,7 +230,7 @@ plainly and the command exits non-zero.
 ### Registering a project
 
 ```sh
-ledger project add <url-or-local-path> --name <name> [--delivery-mode direct-pr|local-only]
+ledger project add <url-or-local-path> --name <name> --code <CODE> [--delivery-mode direct-pr|local-only]
 ```
 
 Always clones into ledger's own `$LEDGER_HOME/projects/<name>` — never the
@@ -239,7 +245,7 @@ remote (e.g. the very first agent dispatched for a brand-new idea) — use
 `init` instead of `add`:
 
 ```sh
-ledger project init --name <name> [--delivery-mode direct-pr|local-only]
+ledger project init --name <name> --code <CODE> [--delivery-mode direct-pr|local-only]
 ```
 
 Creates an empty git repo (one empty initial commit — just enough for
@@ -254,7 +260,7 @@ yourself — what the project becomes is the dispatched agent's job.
 pushed somewhere for the first time — record it:
 
 ```sh
-ledger project update <name> [--repo-url <url>] [--delivery-mode <mode>]
+ledger project update <name> [--name <new-name>] [--code <CODE>] [--repo-url <url>] [--delivery-mode <mode>]
 ```
 
 Adds a git `origin` remote to the local clone if it doesn't already have
@@ -263,14 +269,70 @@ always reflects the actual git remote, not just what was requested — if
 `origin` already existed with a different URL, the response includes a
 `warning` rather than silently recording something git doesn't agree with.
 
-Other project commands: `ledger project list [--json]`, `ledger project get <name>`.
+Other project commands: `ledger project list [--json]`, `ledger project get <name>`
+(both show `code`, `code_confirmed`, and `roadmap_items_issued` — see below).
+
+#### Roadmap item keys (roadmap #80)
+
+Roadmap items are referred to by **key**, `<CODE>-<n>` (e.g. `LEDGER-80`),
+everywhere user-facing: CLI arguments and output, `catchup`, agent task
+prompts, PR/commit text, C10. The global numeric id is internal (FK target
+only) and is no longer printed. Always pass and quote keys.
+
+- **Code**: the project's short code — `A-Z0-9`, 2–10 chars, unique — is
+  **required** at `project add` / `project init` (`--code`, case-insensitive,
+  stored upper-case). It is confirmed from the start.
+- **Number**: per project, starting at 1, assigned automatically on
+  `roadmap add`. **Monotonic and never reused**: dropping/discarding an item
+  doesn't free its number, so `roadmap_items_issued` on `project get`/`list`
+  is "items ever in play" for that project.
+- **Immutable once issued** — with one exception, below. Keys resolve by
+  their stored value.
+- **Deprecated numeric alias**: a bare numeric id (`ledger roadmap update 80`)
+  still works for now, prints a one-line `Deprecated: ... use the item key
+  LEDGER-80` notice to **stderr** (stdout/JSON unaffected), and is never
+  echoed in new output. **Removal condition**: remove the alias in the first
+  release after (1) `ledger-notify`, `ledger-dashboard` and the clerk skill
+  all pass/parse keys, and (2) they run clean with
+  `LEDGER_STRICT_ITEM_KEYS=1` (which turns the alias into an error so a
+  consumer can prove it no longer uses it). Until then, new code must not
+  rely on it.
+- **`--parent`, `--roadmap-item`, `roadmap update`** take keys. JSON output
+  of roadmap rows has `key` / `parent_key` (no `id`/`parent_id`); agent rows
+  have `roadmap_item` (a key) instead of `roadmap_item_id`.
+
+**Upgrade of an existing store.** The schema migration (0006) is automatic
+and non-interactive — it runs on any DB open, including agents, the watcher
+and hooks, and never prompts. It first writes a timestamped, *verified*
+copy of the store to `$LEDGER_HOME/backups/` (integrity check + row counts),
+then gives every existing project a **provisional** code derived from its
+name (upper-cased, non-alphanumerics dropped, ≤10 chars; collisions get a
+numeric suffix, in project-id order) and backfills keys per project in
+existing id order (e.g. `msshp` #44 → `MSSHP-1`). Nothing already linked
+(agents, events, parents) is touched. While a code is **provisional**,
+changing it **rewrites that project's existing keys**; once **confirmed**
+(set explicitly at add/init, or via `project update --code` / `project
+codes`) the code is **frozen** and its keys are final — a confirmed code
+can't be changed. `catchup` and `ledger update` print a notice while any
+project is still provisional. Confirm them with:
+
+```sh
+ledger project codes                        # interactive, TTY only: accept/type a code per provisional project
+ledger project update <name> --code <CODE>  # non-interactive equivalent; also confirms
+```
+
+Check/undo: `ledger db verify` re-runs the backfill checks (read-only);
+`ledger db rollback --to 5 --yes` reverses migration 0006 (drops keys/codes,
+keeps all data and relationships — run the older binary afterward, a newer
+one re-migrates forward on its next open). The backup file is the
+restore path of last resort.
 
 ### Roadmap: turning asks into briefs
 
 ```sh
-ledger roadmap add --project <name> --title <title> [--parent <id>] [--description <text>] [--priority <high|normal|low>]
+ledger roadmap add --project <name> --title <title> [--parent <key>] [--description <text>] [--priority <high|normal|low>]
 ledger roadmap list --project <name> [--status <status>] [--all] [--json]
-ledger roadmap update <id> [--status <status>] [--title <title>] [--description <text>] [--priority <high|normal|low>]
+ledger roadmap update <key> [--status <status>] [--title <title>] [--description <text>] [--priority <high|normal|low>]
 ```
 
 Statuses (roadmap #89, 2026-09-24 — replaces the old bare `done`):
@@ -298,8 +360,8 @@ is `idle` under C7. `in_review` can be set more loosely — a PR/MR URL in
 an agent's outcome is reasonable evidence code is up for review — since
 it isn't terminal.
 
-`--parent` nests a sub-item under an existing roadmap item (arbitrary
-depth).
+`--parent <key>` nests a sub-item under an existing roadmap item (arbitrary
+depth). `roadmap add` prints the new item's key.
 
 Priority: `high | normal | low`, default `normal` (also a column on every
 row: JSON output and `list`'s table both show it). It is a coarse triage
@@ -317,7 +379,7 @@ rather than deciding unilaterally or always making them write it themselves
 — unless they've told you otherwise for this project. A `roadmap` row's
 `description` is a good place for the brief itself (acceptance criteria,
 constraints, what's explicitly out of scope) — that's what you'll turn into
-`--task` text at dispatch time via `--roadmap-item <id>`.
+`--task` text at dispatch time via `--roadmap-item <key>`.
 
 `roadmap list` and `catchup`'s "Roadmap in flight" section both exclude
 all terminal statuses (`merged`/`completed`/`discarded`/`dropped`) by
@@ -328,7 +390,7 @@ default; pass `--all` (`roadmap list` only) to see everything.
 ```sh
 ledger agent dispatch --project <name> --task "<description>" \
   --authorization <user-explicit|pre-authorized> \
-  [--roadmap-item <id>] [--kind claude|pi|codex|...] \
+  [--roadmap-item <key>] [--kind claude|pi|codex|...] \
   [--label <short-label>] [--spawned-by <agentId>] [--wait] \
   [--confirm-duplicate]
 ```
@@ -559,10 +621,13 @@ above if genuinely needed, don't fold them into this repo.
 Full DDL lives in `src/db/migrations/0001_init.ts` (source of truth — this
 is a summary, not a copy to keep in sync by hand):
 
-- `projects` — one row per registered project (`local_clone_path`,
+- `projects` — one row per registered project (`code`, `code_confirmed`,
+  `roadmap_items_issued`, `local_clone_path`,
   `default_branch`, `delivery_mode`, `herdr_workspace` — the project's
   shared herdr workspace, NULL until its first dispatch).
-- `roadmap` — hierarchical (`parent_id` self-reference), `status` enum
+- `roadmap` — hierarchical (`parent_id` self-reference), `key`/`item_number`
+  (per-project `<CODE>-<n>`, set by trigger, immutable once confirmed),
+  `status` enum
   `planned|in_progress|blocked|in_review|merged|completed|discarded|dropped`
   (see "Roadmap: turning asks into briefs" above for what each means and
   the observation-required rule on `merged`/`discarded`), `priority` enum
