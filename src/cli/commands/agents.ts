@@ -13,6 +13,7 @@ import type {
 } from "../../db/types.js";
 import { trustClaudeWorktree } from "../../lib/claude-trust.js";
 import * as herdr from "../../lib/herdr.js";
+import { keyForItemId, presentAgent, resolveRoadmapRef } from "../../lib/roadmap-keys.js";
 import { leaseWorktree, returnWorktree } from "../../lib/treehouse.js";
 import { printJson, printTable } from "../format.js";
 import { getProjectById, getProjectByName } from "./projects.js";
@@ -42,7 +43,7 @@ export function registerAgentCommands(program: Command): void {
       "who authorized this dispatch (user-explicit | pre-authorized) - " +
         "clerk-attested, recorded on the agent row for audit (C6)",
     )
-    .option("--roadmap-item <id>", "roadmap item this dispatch implements", parseIntOpt)
+    .option("--roadmap-item <key>", "roadmap item (key, e.g. LEDGER-12) this dispatch implements")
     .option(
       "--confirm-duplicate",
       "explicit user authorization to run a second live agent on a roadmap " +
@@ -61,7 +62,7 @@ export function registerAgentCommands(program: Command): void {
         project: string;
         task: string;
         authorization: string;
-        roadmapItem?: number;
+        roadmapItem?: string;
         confirmDuplicate?: boolean;
         kind: string;
         label?: string;
@@ -78,18 +79,17 @@ export function registerAgentCommands(program: Command): void {
         }
         const authorization = opts.authorization as AuthorizationBasis;
 
+        let roadmapItemId: number | null = null;
+        let roadmapItemKey: string | null = null;
         if (opts.roadmapItem !== undefined) {
-          const item = db
-            .prepare("SELECT id, project_id FROM roadmap WHERE id = ?")
-            .get(opts.roadmapItem) as unknown as
-            | { id: number; project_id: number }
-            | undefined;
-          if (!item) throw new Error(`no roadmap item #${opts.roadmapItem}`);
+          const item = resolveRoadmapRef(opts.roadmapItem, db);
           if (item.project_id !== project.id) {
             throw new Error(
-              `roadmap item #${opts.roadmapItem} belongs to a different project`,
+              `roadmap item ${item.key} belongs to a different project`,
             );
           }
+          roadmapItemId = item.id;
+          roadmapItemKey = item.key;
           // C6: refuse a second live agent on an item that already has one
           // without explicit confirmation. done/idle rows are terminal or
           // dormant and don't count as live.
@@ -98,10 +98,10 @@ export function registerAgentCommands(program: Command): void {
               `SELECT id FROM agents
                WHERE roadmap_item_id = ? AND status IN ('working', 'blocked')`,
             )
-            .all(opts.roadmapItem) as unknown as { id: number }[];
+            .all(item.id) as unknown as { id: number }[];
           if (live.length > 0 && !opts.confirmDuplicate) {
             throw new Error(
-              `roadmap item #${opts.roadmapItem} already has a live agent ` +
+              `roadmap item ${item.key} already has a live agent ` +
                 `(${live.map((a) => `#${a.id}`).join(", ")}) — a second dispatch ` +
                 `needs the user's explicit word; pass --confirm-duplicate only ` +
                 `if they gave it (C6)`,
@@ -183,7 +183,7 @@ export function registerAgentCommands(program: Command): void {
           )
           .get(
             project.id,
-            opts.roadmapItem ?? null,
+            roadmapItemId,
             opts.task,
             worktreePath,
             pane.workspaceId,
@@ -201,7 +201,7 @@ export function registerAgentCommands(program: Command): void {
         try {
           herdr.promptAgent({
             target: pane.paneId,
-            text: buildTaskPrompt(row.id, opts.task, project),
+            text: buildTaskPrompt(row.id, opts.task, project, roadmapItemKey),
             wait: opts.wait ?? false,
           });
         } catch (err) {
@@ -215,7 +215,7 @@ export function registerAgentCommands(program: Command): void {
           throw err;
         }
 
-        printJson(row);
+        printJson(presentAgent(row, db));
       },
     );
 
@@ -320,7 +320,7 @@ export function registerAgentCommands(program: Command): void {
       try {
         herdr.promptAgent({
           target: row.herdr_pane,
-          text: buildFollowupPrompt(row.id, opts.task, project),
+          text: buildFollowupPrompt(row.id, opts.task, project, keyForItemId(row.roadmap_item_id, db)),
           wait: opts.wait ?? false,
         });
       } catch (err) {
@@ -333,7 +333,7 @@ export function registerAgentCommands(program: Command): void {
         throw err;
       }
 
-      printJson(row);
+      printJson(presentAgent(row, db));
     });
 
   agent
@@ -360,15 +360,16 @@ export function registerAgentCommands(program: Command): void {
       sql += " ORDER BY id DESC";
 
       const rows = db.prepare(sql).all(...params) as unknown as AgentRow[];
-      if (opts.json) printJson(rows);
-      else printTable(rows);
+      const presented = rows.map((r) => presentAgent(r, db));
+      if (opts.json) printJson(presented);
+      else printTable(presented);
     });
 
   agent
     .command("get <id>")
     .description("show an agent by id")
     .action((id: string) => {
-      printJson(getAgentById(Number(id)));
+      printJson(presentAgent(getAgentById(Number(id))));
     });
 
   agent
@@ -400,7 +401,7 @@ export function registerAgentCommands(program: Command): void {
         ).run(row.id, JSON.stringify({ status: opts.status, outcome: opts.outcome }));
       }
 
-      printJson(row);
+      printJson(presentAgent(row, db));
     });
 
   agent
@@ -598,7 +599,12 @@ function survivalProof(worktreePath: string): SurvivalProof {
  * no PR approval) lives in both delivery texts since the
  * self-merge incident, generalized 2026-09-02.
  */
-function buildTaskPrompt(agentId: number, task: string, project: ProjectRow): string {
+export function buildTaskPrompt(
+  agentId: number,
+  task: string,
+  project: ProjectRow,
+  roadmapItemKey: string | null = null,
+): string {
   const deliveryInstructions =
     project.delivery_mode === "direct-pr"
       ? `Work on a new branch — never commit directly to '${project.default_branch}'.
@@ -624,11 +630,22 @@ When you're done, run this as your last step:
   ledger agent update ${agentId} --status done --outcome '<branch-name-or-report-path>'`;
 
   return `${task}
-
+${roadmapItemLine(roadmapItemKey)}
 ---
 ${deliveryInstructions}
 
 ${reportingContractTail(agentId)}`;
+}
+
+/**
+ * Roadmap #80: tells the agent which roadmap item it is working by key — and
+ * to refer to it by key, never a bare number — so its PR text and
+ * `--outcome` use the same handle the board does.
+ */
+function roadmapItemLine(key: string | null): string {
+  return key
+    ? `\nRoadmap item: ${key} — refer to it by this key (not a bare number) in your PR, commits and outcome.\n`
+    : "";
 }
 
 /**
@@ -672,7 +689,12 @@ is the clerk's job, not yours.`;
  * gives — the whole point of a follow-up is that this agent already has
  * one going.
  */
-function buildFollowupPrompt(agentId: number, task: string, project: ProjectRow): string {
+export function buildFollowupPrompt(
+  agentId: number,
+  task: string,
+  project: ProjectRow,
+  roadmapItemKey: string | null = null,
+): string {
   const deliveryInstructions =
     project.delivery_mode === "direct-pr"
       ? `This is a follow-up on the task you already have in progress, in this
@@ -693,7 +715,7 @@ anything else you're told. When you're done with this follow-up, run:
   ledger agent update ${agentId} --status done --outcome '<branch-name-or-report-path>'`;
 
   return `${task}
-
+${roadmapItemLine(roadmapItemKey)}
 ---
 ${deliveryInstructions}
 

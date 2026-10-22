@@ -96,13 +96,13 @@ and the skill works with no edits.
 ```sh
 # Register a project (clones into ledger's own home dir — never your
 # working checkout; see DESIGN.md for why).
-ledger project add /path/to/repo-or-url --name myproj
+ledger project add /path/to/repo-or-url --name myproj --code MYP
 
 # Break a feature into scoped briefs.
 ledger roadmap add --project myproj --title "Do the thing"
 
 # Dispatch an agent against one brief.
-ledger agent dispatch --project myproj --task "Implement X" --roadmap-item 1
+ledger agent dispatch --project myproj --task "Implement X" --roadmap-item MYP-1
 
 # Session start / "what's going on" — the entire catch-up operation.
 ledger catchup

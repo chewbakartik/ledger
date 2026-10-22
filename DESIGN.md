@@ -235,6 +235,12 @@ CREATE TABLE first_clerk (
 );
 ```
 
+Since roadmap #80 the schema also carries per-project item keys
+(`projects.code` / `code_confirmed` / `roadmap_items_issued`,
+`roadmap.item_number` / `key`); user-facing output refers to roadmap items
+by key and never prints the internal `roadmap.id`. See LEDGER.md "Roadmap
+item keys" and DECISIONS.md.
+
 Treat this as a strong starting point, not gospel. It should evolve as real
 usage reveals what's actually needed, but keep changes disciplined — every
 new column or table should have a clear reason tied to something the clerk

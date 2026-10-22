@@ -1399,3 +1399,88 @@ file mode preserved (0600 if created), all other keys kept, malformed file
 refused rather than overwritten. Also: on `agent_pane_busy`, `startAgent`
 now checks whether herdr already sees an agent on the pane (an earlier
 attempt launched it) and waits for idle instead of failing.
+
+
+## Roadmap item keys: per-project `<CODE>-<n>`, replacing global numeric ids — 2026-10-22, user-directed (item 80)
+
+**Problem.** Roadmap ids were one global sequence across projects: anyone
+seeing only some projects could infer total work volume, and there was no
+cheap "how many items has this project ever had". Items are now referred to
+by a per-project **key**, `<CODE>-<n>` (e.g. `LEDGER-80`), in all
+user-facing output; the integer PK stays as the FK target (agents, parents)
+but is never printed.
+
+**Decisions (user, accepted clerk recommendations; item 80's DECISIONS):**
+(a) explicit short code at `project add`/`init` (now a *required* `--code`),
+`A-Z0-9`, 2–10 chars, unique; (b) existing items backfilled per project in
+current id order (`msshp` #44 → `MSSHP-1`); (c) bare numeric ids remain a
+deprecated alias; (d) issued keys are immutable.
+
+**Amendment (user, same day; supersedes (d) where it conflicts)** — the
+upgrade path for existing installs:
+1. The migration (0006) is automatic and *non-interactive* — SQL + a small
+   backfill hook, runs on any DB open (agents, watcher, hooks), never prompts.
+   It derives a **provisional** code per existing project from its name
+   (upper-case, strip non-`A-Z0-9`, ≤10 chars, pad to ≥2; collisions get a
+   numeric suffix, resolved in project-id order so it is deterministic) and
+   backfills keys in id order.
+2. Before applying, the store is copied to
+   `$LEDGER_HOME/backups/ledger-pre-v<N>-from-v<M>-<ts>.db` (`VACUUM INTO`)
+   and the copy is **verified** (integrity check + row counts of every core
+   table); a failed verification aborts the migration.
+3. `projects.code_confirmed`: 0 = provisional, 1 = confirmed. While
+   provisional, changing the code **rewrites that project's keys** (numbers
+   unchanged); once confirmed (explicit at add/init, or via `project update
+   --code`/`project codes`) the code is **frozen** and keys are final.
+4. `catchup` (text notice + `provisional_project_codes` in `--json`) and
+   `ledger update` print a notice while any project is provisional.
+5. `ledger project codes` is interactive and refuses without a TTY;
+   `ledger project update <name> --code X` is the non-interactive
+   equivalent and also confirms.
+6. New installs: explicit code, first item is `<CODE>-1`.
+
+**Interpretation to flag (not asked, chosen):** "frozen" is read literally —
+`project update --code` on an *already-confirmed* project is refused (same
+code = harmless no-op). Item (a)'s "editable via project update" therefore
+only applies while provisional. Relaxing to "confirmed code may change,
+affecting only newly issued keys" is a small change (drop the refusal in
+`setProjectCode`; keys already resolve by stored value) if wanted.
+
+**Mechanics.**
+- Expand-only migration: `ADD COLUMN`s, indexes, triggers; no table rebuild,
+  no existing column touched, so every `roadmap.id`/FK is byte-identical
+  (tested). New columns: `projects.code`, `code_confirmed`,
+  `roadmap_items_issued` (the monotonic counter, exposed in `project
+  get/list`: "items ever in play"); `roadmap.item_number`, `key`.
+- Keys are assigned by an `AFTER INSERT` trigger, not CLI code, so a roadmap
+  row inserted by an *older* binary (mixed-version overlap, agent mid-flight)
+  still gets a key. Further triggers make `item_number`/`project_id`
+  immutable, `key` immutable once the project's code is confirmed, and the
+  counter non-decreasing (deleting an item never frees its number).
+- **Rollback**: migrations may now carry `down`; `ledger db rollback --to 5
+  --yes` drops the columns/indexes/triggers and leaves all data and
+  relationships intact (tested incl. post-migration rows and re-upgrade).
+  The runner also gained `apply` (procedural backfill) and `verify` hooks —
+  a failing `verify` rolls the whole migration back, nothing recorded.
+  `ledger db verify` re-runs the backfill checks any time (read-only).
+  Rolling back only helps with an *older* binary; a newer one re-migrates.
+- **Deprecated numeric alias**: `roadmap update 80` still works, one-line
+  stderr notice naming the key (stdout/JSON untouched), never echoed in new
+  output. **Removal condition**: once `ledger-notify`, `ledger-dashboard`
+  and the clerk skill all use keys and run clean under
+  `LEDGER_STRICT_ITEM_KEYS=1` (makes the alias an error), drop the alias in
+  the following release.
+- Agent task/follow-up prompts now carry `Roadmap item: <KEY>` (with an
+  instruction to cite the key, not a number); agent JSON shows `roadmap_item`
+  instead of `roadmap_item_id`. In-flight agents are unaffected: their
+  prompts only ever contained *agent* ids, which are unchanged, and
+  `agents.roadmap_item_id` is untouched.
+- Verified on a copy of the real store (8 projects, 80 items, 71 agents,
+  745 events): migrate → `db verify` ok → `catchup` shows keys + the
+  provisional notice → `db rollback --to 5` → row counts and FK check clean.
+
+**Out of scope / noted.** Agent ids, event ids and project ids are still
+global sequences and still printed (agent ids are used in the agent prompts
+and `agent update 71`); this item covers roadmap items only. Consumers in
+other repos (ledger-notify, ledger-dashboard, the clerk skill) are
+inventoried in the PR, not edited.
