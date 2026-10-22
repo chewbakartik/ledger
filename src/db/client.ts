@@ -37,7 +37,7 @@ export function getDb(): DatabaseSyncCtor {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
 
-  applyMigrations(db);
+  applyMigrations(db, { backupDir: join(home, "backups") });
 
   return db;
 }
@@ -90,7 +90,58 @@ export function touchClerkHeartbeat(): void {
   }
 }
 
-function applyMigrations(database: DatabaseSyncCtor): void {
+export interface ApplyOptions {
+  /** Stop after this version (default: apply everything pending). */
+  target?: number;
+  /**
+   * If set and the store already has applied migrations, snapshot it here
+   * (VACUUM INTO — a consistent copy, safe under WAL) before applying
+   * anything. This is the restore path for a migration whose effect can't
+   * be reversed by its `down` (and a belt-and-braces one for those that can).
+   */
+  backupDir?: string;
+}
+
+const BACKED_UP_TABLES = ["projects", "roadmap", "agents", "events", "first_clerk"] as const;
+
+function countRows(database: DatabaseSyncCtor, table: string): number {
+  return (database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+}
+
+/**
+ * Timestamped pre-migration snapshot (VACUUM INTO: a consistent copy, safe
+ * under WAL), then VERIFIED before the caller proceeds: the copy must pass
+ * `integrity_check` and hold the same row count as the source in every core
+ * table. Throws — aborting the migration — if it doesn't.
+ */
+export function backupStore(
+  database: DatabaseSyncCtor,
+  backupDir: string,
+  fromVersion: number,
+  toVersion: number,
+): string {
+  mkdirSync(backupDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dest = join(backupDir, `ledger-pre-v${toVersion}-from-v${fromVersion}-${stamp}.db`);
+  database.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
+
+  const copy = new DatabaseSync(dest, { readOnly: true });
+  try {
+    const integrity = (copy.prepare("PRAGMA integrity_check").get() as { integrity_check: string }).integrity_check;
+    if (integrity !== "ok") throw new Error(`integrity_check says: ${integrity}`);
+    for (const table of BACKED_UP_TABLES) {
+      const [src, dup] = [countRows(database, table), countRows(copy, table)];
+      if (src !== dup) throw new Error(`${table} has ${src} rows but the copy has ${dup}`);
+    }
+  } catch (err) {
+    throw new Error(`pre-migration backup ${dest} failed verification (${(err as Error).message}); not migrating`);
+  } finally {
+    copy.close();
+  }
+  return dest;
+}
+
+export function applyMigrations(database: DatabaseSyncCtor, opts: ApplyOptions = {}): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       version     INTEGER PRIMARY KEY,
@@ -104,8 +155,18 @@ function applyMigrations(database: DatabaseSyncCtor): void {
     .get() as { v: number };
   const applied = appliedRow.v;
 
-  const pending = migrations.filter((m) => m.version > applied);
+  const pending = migrations.filter(
+    (m) => m.version > applied && (opts.target === undefined || m.version <= opts.target),
+  );
   if (pending.length === 0) return;
+
+  if (opts.backupDir && applied > 0) {
+    const dest = backupStore(database, opts.backupDir, applied, pending[0]?.version ?? applied + 1);
+    console.error(
+      `ledger: backed up the store to ${dest} before migrating ` +
+        `(schema v${applied} -> v${pending[pending.length - 1]?.version})`,
+    );
+  }
 
   const insertMigration = database.prepare(
     "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
@@ -129,6 +190,10 @@ function applyMigrations(database: DatabaseSyncCtor): void {
       database.exec("BEGIN");
       try {
         database.exec(migration.sql);
+        migration.apply?.(database);
+        // verify() throwing rolls the whole migration back (nothing is
+        // committed or recorded), so a bad backfill can't half-land.
+        migration.verify?.(database);
         insertMigration.run(migration.version, migration.name);
         database.exec("COMMIT");
       } catch (err) {
@@ -146,4 +211,49 @@ function applyMigrations(database: DatabaseSyncCtor): void {
       `migration left dangling foreign keys: ${JSON.stringify(violations)}`,
     );
   }
+}
+
+/**
+ * Reverse applied migrations down to (and keeping) `target`, newest first,
+ * each in its own transaction. Refuses — before changing anything — if any
+ * migration in range has no `down`. Not wired to getDb(): rolling back is
+ * always an explicit act (`ledger db rollback`).
+ *
+ * Caveat: the next run of a NEWER binary re-applies forward migrations
+ * automatically. To stay rolled back, run the older binary.
+ */
+export function rollbackTo(database: DatabaseSyncCtor, target: number): number[] {
+  const appliedVersions = (
+    database.prepare("SELECT version FROM schema_migrations WHERE version > ? ORDER BY version DESC").all(target) as unknown as {
+      version: number;
+    }[]
+  ).map((r) => r.version);
+
+  const plan = appliedVersions.map((v) => {
+    const m = migrations.find((x) => x.version === v);
+    if (!m?.down) throw new Error(`migration ${v}${m ? ` (${m.name})` : ""} has no rollback; restore from a backup instead`);
+    return m;
+  });
+
+  database.exec("PRAGMA foreign_keys = OFF");
+  try {
+    for (const m of plan) {
+      database.exec("BEGIN");
+      try {
+        database.exec(m.down as string);
+        database.prepare("DELETE FROM schema_migrations WHERE version = ?").run(m.version);
+        database.exec("COMMIT");
+      } catch (err) {
+        database.exec("ROLLBACK");
+        throw err;
+      }
+    }
+  } finally {
+    database.exec("PRAGMA foreign_keys = ON");
+  }
+  const violations = database.prepare("PRAGMA foreign_key_check").all();
+  if (violations.length > 0) {
+    throw new Error(`rollback left dangling foreign keys: ${JSON.stringify(violations)}`);
+  }
+  return appliedVersions;
 }

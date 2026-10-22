@@ -4,6 +4,7 @@ import { getDb } from "../../db/client.js";
 import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow } from "../../db/types.js";
 import { ROADMAP_TERMINAL_STATUSES } from "../../db/types.js";
 import { getPane, HerdrError, readPane } from "../../lib/herdr.js";
+import { presentAgent, presentRoadmap, provisionalCodesNotice, provisionalProjects } from "../../lib/roadmap-keys.js";
 import { packageVersion } from "../../lib/package-info.js";
 import { checkForUpdate, formatUpdateNotice, type UpdateInfo } from "../../lib/update-check.js";
 import { printJson } from "../format.js";
@@ -242,16 +243,19 @@ export function registerCatchupCommand(program: Command): void {
       // --json stays valid JSON in both cases.
       const updateAvailable: UpdateInfo | null = await checkForUpdate(packageVersion());
 
+      // Roadmap #80: user-facing output carries item keys, never the global
+      // numeric ids — present agents/roadmap rows before they're emitted.
       const summary = {
         since,
-        blocked,
-        idle,
+        blocked: blocked.map((a) => presentAgent(a, db)),
+        idle: idle.map((e) => ({ ...e, agent: presentAgent(e.agent, db) })),
         idle_pane_read_note: idlePaneGlobalNote,
-        done_with_live_pane: doneWithLivePane,
+        done_with_live_pane: doneWithLivePane.map((e) => ({ ...e, agent: presentAgent(e.agent, db) })),
         done_pane_read_note: donePaneGlobalNote,
         events,
-        roadmap,
+        roadmap: roadmap.map((r) => presentRoadmap(r, db)),
         update_available: updateAvailable,
+        provisional_project_codes: provisionalProjects(db),
       };
 
       if (opts.json) {
@@ -304,11 +308,13 @@ export function registerCatchupCommand(program: Command): void {
         console.log(`  ${e.created_at} agent#${e.agent_id} ${e.event_type}`);
       }
       console.log(`\nRoadmap in flight (${roadmap.length}):`);
-      for (const r of roadmap) {
-        const indent = r.parent_id ? "    " : "  ";
-        console.log(`${indent}#${r.id} [${projectLabel(r.project_id)}] [${r.status}] ${r.title}`);
+      for (const r of summary.roadmap) {
+        const indent = r.parent_key ? "    " : "  ";
+        console.log(`${indent}${r.key} [${projectLabel(r.project_id)}] [${r.status}] ${r.title}`);
       }
 
       if (updateAvailable) console.log(`\n${formatUpdateNotice(updateAvailable)}`);
+      const codesNotice = provisionalCodesNotice(db);
+      if (codesNotice) console.log(`\n${codesNotice}`);
     });
 }

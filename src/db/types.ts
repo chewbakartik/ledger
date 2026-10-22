@@ -115,10 +115,24 @@ export interface ProjectRow {
   created_at: string;
   /** The project's shared herdr workspace — one per project, not per dispatch. NULL until a first dispatch. */
   herdr_workspace: string | null;
+  /**
+   * Short code for roadmap item keys (`<code>-<n>`): A-Z0-9, 2-10 chars,
+   * unique. Only NULL on a store between migration 0006's DDL and its
+   * backfill — never observable through the CLI.
+   */
+  code: string | null;
+  /** 0 = provisional (derived by migration 0006; changing it rewrites this project's keys), 1 = confirmed/frozen. */
+  code_confirmed: 0 | 1;
+  /** Monotonic count of item keys ever issued for this project (never decreases, never reused). */
+  roadmap_items_issued: number;
 }
 
 export interface RoadmapRow {
+  /** Internal primary key — FK target only; never print it (use `key`). */
   id: number;
+  /** `<project code>-<n>`, immutable once issued. */
+  key: string | null;
+  item_number: number | null;
   project_id: number;
   parent_id: number | null;
   title: string;

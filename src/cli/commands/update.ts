@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
+import { provisionalCodesNotice } from "../../lib/roadmap-keys.js";
 import { packageVersion, PACKAGE_NAME } from "../../lib/package-info.js";
 import { fetchLatestVersionOrThrow, isNewerVersion } from "../../lib/update-check.js";
 
@@ -28,6 +29,7 @@ export function registerUpdateCommand(program: Command): void {
 
       if (!isNewerVersion(latest, current)) {
         console.log(`Already up to date (${current}).`);
+        printCodesNotice();
         return;
       }
 
@@ -45,5 +47,19 @@ export function registerUpdateCommand(program: Command): void {
       }
 
       console.log(`Updated ${PACKAGE_NAME}: ${current} -> ${latest}.`);
+      printCodesNotice();
     });
+}
+
+/**
+ * Roadmap #80: nudge while any project still has a provisional key code.
+ * Best-effort — an unreadable store must never fail an update.
+ */
+function printCodesNotice(): void {
+  try {
+    const notice = provisionalCodesNotice();
+    if (notice) console.log(`\n${notice}`);
+  } catch {
+    // no store yet, or an older schema — nothing to nudge about
+  }
 }

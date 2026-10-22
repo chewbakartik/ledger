@@ -3,6 +3,7 @@ import type { SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { RoadmapPriority, RoadmapRow, RoadmapStatus } from "../../db/types.js";
 import { ROADMAP_PRIORITIES, ROADMAP_STATUSES, ROADMAP_TERMINAL_STATUSES } from "../../db/types.js";
+import { presentRoadmap, resolveRoadmapRef } from "../../lib/roadmap-keys.js";
 import { printJson, printTable } from "../format.js";
 import { getProjectByName } from "./projects.js";
 
@@ -19,7 +20,7 @@ export function registerRoadmapCommands(program: Command): void {
     .requiredOption("--project <name>", "project name")
     .requiredOption("--title <title>", "item title")
     .option("--description <text>", "longer description")
-    .option("--parent <id>", "parent roadmap item id, for a sub-item", parseIntOpt)
+    .option("--parent <key>", "parent roadmap item key (e.g. LEDGER-12), for a sub-item")
     .option(
       "--priority <priority>",
       `item priority (${ROADMAP_PRIORITIES.join("|")}, default normal)`,
@@ -29,11 +30,17 @@ export function registerRoadmapCommands(program: Command): void {
         project: string;
         title: string;
         description?: string;
-        parent?: number;
+        parent?: string;
         priority?: string;
       }) => {
         const project = getProjectByName(opts.project);
         const db = getDb();
+        if (project.code === null) {
+          throw new Error(
+            `project "${project.name}" has no roadmap-key code yet — run ` +
+              `'ledger project update ${project.name} --code <CODE>' first`,
+          );
+        }
         // Note: assertValidPriority() is an assertion function (returns
         // void) — it validates/narrows, it must not be used as the value.
         let priority: RoadmapPriority = "normal";
@@ -42,35 +49,37 @@ export function registerRoadmapCommands(program: Command): void {
           priority = opts.priority;
         }
 
+        let parentId: number | null = null;
         if (opts.parent !== undefined) {
-          const parent = db
-            .prepare("SELECT id, project_id FROM roadmap WHERE id = ?")
-            .get(opts.parent) as unknown as
-            | { id: number; project_id: number }
-            | undefined;
-          if (!parent) throw new Error(`no roadmap item #${opts.parent}`);
+          const parent = resolveRoadmapRef(opts.parent, db);
           if (parent.project_id !== project.id) {
             throw new Error(
-              `roadmap item #${opts.parent} belongs to a different project`,
+              `roadmap item ${parent.key} belongs to a different project`,
             );
           }
+          parentId = parent.id;
         }
 
-        const row = db
+        // The item's key is assigned by a DB trigger (migration 0006), and
+        // RETURNING doesn't see trigger effects — so re-read the row.
+        const inserted = db
           .prepare(
             `INSERT INTO roadmap (project_id, parent_id, title, description, priority)
              VALUES (?, ?, ?, ?, ?)
-             RETURNING *`,
+             RETURNING id`,
           )
           .get(
             project.id,
-            opts.parent ?? null,
+            parentId,
             opts.title,
             opts.description ?? null,
             priority,
-          ) as unknown as RoadmapRow;
+          ) as unknown as { id: number };
+        const row = db
+          .prepare("SELECT * FROM roadmap WHERE id = ?")
+          .get(inserted.id) as unknown as RoadmapRow;
 
-        printJson(row);
+        printJson(presentRoadmap(row, db));
       },
     );
 
@@ -103,27 +112,25 @@ export function registerRoadmapCommands(program: Command): void {
         sql += " ORDER BY parent_id IS NOT NULL, id";
 
         const rows = db.prepare(sql).all(...params) as unknown as RoadmapRow[];
-        if (opts.json) printJson(rows);
-        else printTable(rows);
+        const presented = rows.map((r) => presentRoadmap(r, db));
+        if (opts.json) printJson(presented);
+        else printTable(presented);
       },
     );
 
   roadmap
-    .command("update <id>")
+    .command("update <key>")
     .description("update a roadmap item's status/title/description/priority")
     .option("--status <status>", `new status (${VALID_STATUSES.join("|")})`)
     .option("--title <title>", "new title")
     .option("--description <text>", "new description")
     .option("--priority <priority>", `new priority (${ROADMAP_PRIORITIES.join("|")})`)
     .action(
-      (id: string, opts: { status?: string; title?: string; description?: string; priority?: string }) => {
+      (ref: string, opts: { status?: string; title?: string; description?: string; priority?: string }) => {
         if (opts.status) assertValidStatus(opts.status);
         if (opts.priority) assertValidPriority(opts.priority);
         const db = getDb();
-        const existing = db
-          .prepare("SELECT * FROM roadmap WHERE id = ?")
-          .get(Number(id)) as unknown as RoadmapRow | undefined;
-        if (!existing) throw new Error(`no roadmap item #${id}`);
+        const existing = resolveRoadmapRef(ref, db);
 
         const row = db
           .prepare(
@@ -137,10 +144,10 @@ export function registerRoadmapCommands(program: Command): void {
             opts.title ?? existing.title,
             opts.description ?? existing.description,
             opts.priority ?? existing.priority,
-            Number(id),
+            existing.id,
           ) as unknown as RoadmapRow;
 
-        printJson(row);
+        printJson(presentRoadmap(row, db));
       },
     );
 }
@@ -155,10 +162,4 @@ function assertValidPriority(priority: string): asserts priority is RoadmapPrior
   if (!ROADMAP_PRIORITIES.includes(priority as RoadmapPriority)) {
     throw new Error(`--priority must be one of: ${ROADMAP_PRIORITIES.join(", ")}`);
   }
-}
-
-function parseIntOpt(value: string): number {
-  const n = Number.parseInt(value, 10);
-  if (Number.isNaN(n)) throw new Error(`not a valid integer: ${value}`);
-  return n;
 }
