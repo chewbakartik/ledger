@@ -106,7 +106,7 @@ test("db verify / status / rollback guard", () => {
   const v = json(["db", "verify"]);
   assert.equal(v.ok, true);
   assert.equal(v.roadmap_items, 2);
-  assert.deepEqual(json(["db", "status"]).reversible, [6]);
+  assert.deepEqual(json(["db", "status"]).reversible, [6, 7]);
   assert.match(run(["db", "rollback", "--to", "5"]).err, /pass --yes/);
 });
 

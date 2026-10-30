@@ -1,10 +1,10 @@
 import { Command } from "commander";
-import type { SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
 import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow, WatchRow } from "../../db/types.js";
 import { ROADMAP_TERMINAL_STATUSES } from "../../db/types.js";
 import { getPane, HerdrError, readPane } from "../../lib/herdr.js";
-import { presentAgent, presentRoadmap, provisionalCodesNotice, provisionalProjects } from "../../lib/roadmap-keys.js";
+import { keyForItemId, presentAgent, presentRoadmap, provisionalCodesNotice, provisionalProjects } from "../../lib/roadmap-keys.js";
 import { packageVersion } from "../../lib/package-info.js";
 import { checkForUpdate, formatUpdateNotice, type UpdateInfo } from "../../lib/update-check.js";
 import { expireDueWatches, parseSteps, presentWatch } from "../../lib/watches.js";
@@ -122,11 +122,11 @@ function shortLabel(taskDescription: string): string {
     : firstLine;
 }
 
-function describeWatch(w: WatchRow): string {
+function describeWatch(w: WatchRow, db: DatabaseSync): string {
   const steps = parseSteps(w);
   const target = [
     w.agent_id !== null ? `agent#${w.agent_id}` : null,
-    w.roadmap_item_id !== null ? `item#${w.roadmap_item_id}` : null,
+    w.roadmap_item_id !== null ? (keyForItemId(w.roadmap_item_id, db) ?? "item") : null,
   ]
     .filter(Boolean)
     .join("+");
@@ -366,17 +366,17 @@ export function registerCatchupCommand(program: Command): void {
       }
 
       console.log(`\nWatches open (${openWatches.length}):`);
-      for (const w of openWatches) console.log(`  ${describeWatch(w)}`);
+      for (const w of openWatches) console.log(`  ${describeWatch(w, db)}`);
       console.log(`\nPending wakes (${pendingWakes.length}) -- the clerk pane couldn't take these:`);
       for (const w of pendingWakes) {
-        console.log(`  ${describeWatch(w)}`);
+        console.log(`  ${describeWatch(w, db)}`);
         console.log(
           `      agent #${w.wake_agent_id} is ${w.wake_state} (outcome: ${w.wake_outcome ?? "none reported"}); ` +
             `undelivered because ${w.wake_reason ?? "unknown"}`,
         );
       }
       console.log(`\nWatches expired since last catchup (${expiredWatches.length}):`);
-      for (const w of expiredWatches) console.log(`  ${describeWatch(w)} (expired ${w.expires_at})`);
+      for (const w of expiredWatches) console.log(`  ${describeWatch(w, db)} (expired ${w.expires_at})`);
 
       if (updateAvailable) console.log(`\n${formatUpdateNotice(updateAvailable)}`);
       const codesNotice = provisionalCodesNotice(db);

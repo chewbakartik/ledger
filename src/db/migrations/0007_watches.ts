@@ -52,4 +52,5 @@ export const migration0007Watches: Migration = {
     );
     CREATE INDEX idx_watches_status ON watches(status);
   `,
+  down: "DROP TABLE watches;",
 };

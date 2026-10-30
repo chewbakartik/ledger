@@ -227,9 +227,9 @@ CREATE TABLE events (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Added later (roadmap #89, migration 0006): watches -- follow-through intent
+-- Added later (roadmap #89, migration 0007): watches -- follow-through intent
 -- (agent/roadmap item, trigger states, ordered steps, expiry, pending-wake
--- marker). Full DDL in src/db/migrations/0006_watches.ts.
+-- marker). Full DDL in src/db/migrations/0007_watches.ts.
 
 CREATE TABLE first_clerk (
   id            INTEGER PRIMARY KEY CHECK (id = 1), -- single row

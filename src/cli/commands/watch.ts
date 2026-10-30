@@ -5,6 +5,7 @@ import type { RoadmapRow, WatchRow, WatchStatus } from "../../db/types.js";
 import { WATCH_STATUSES } from "../../db/types.js";
 import { expireDueWatches, parseSteps, parseTriggers, presentWatch } from "../../lib/watches.js";
 import { printJson, printTable } from "../format.js";
+import { keyForItemId, resolveRoadmapRef } from "../../lib/roadmap-keys.js";
 import { getAgentById } from "./agents.js";
 import { getProjectByName } from "./projects.js";
 
@@ -31,9 +32,8 @@ export function registerWatchCommands(program: Command): void {
     )
     .option("--agent <id>", "agent whose completion triggers a wake", parseIntOpt)
     .option(
-      "--roadmap-item <id>",
-      "roadmap item: any agent dispatched for it triggers a wake",
-      parseIntOpt,
+      "--roadmap-item <key>",
+      "roadmap item key (e.g. LEDGER-12): any agent dispatched for it triggers a wake",
     )
     .requiredOption(
       "--next <instruction>",
@@ -56,7 +56,7 @@ export function registerWatchCommands(program: Command): void {
     .action(
       (opts: {
         agent?: number;
-        roadmapItem?: number;
+        roadmapItem?: string;
         next: string[];
         on: string;
         expiresIn: number;
@@ -71,6 +71,7 @@ export function registerWatchCommands(program: Command): void {
         if (steps.length === 0) throw new Error("--next must not be empty");
 
         let projectId: number | undefined;
+        let roadmapItem: RoadmapRow | undefined;
         if (opts.agent !== undefined) {
           const agent = getAgentById(opts.agent);
           projectId = agent.project_id;
@@ -82,16 +83,15 @@ export function registerWatchCommands(program: Command): void {
           }
         }
         if (opts.roadmapItem !== undefined) {
-          const item = db
-            .prepare("SELECT * FROM roadmap WHERE id = ?")
-            .get(opts.roadmapItem) as unknown as RoadmapRow | undefined;
-          if (!item) throw new Error(`no roadmap item #${opts.roadmapItem}`);
+          const item = resolveRoadmapRef(opts.roadmapItem, db);
+          roadmapItem = item;
           if (projectId !== undefined && projectId !== item.project_id) {
             throw new Error("--agent and --roadmap-item belong to different projects");
           }
           projectId = item.project_id;
         }
 
+        const roadmapItemId = roadmapItem?.id ?? null;
         const row = db
           .prepare(
             `INSERT INTO watches
@@ -103,13 +103,13 @@ export function registerWatchCommands(program: Command): void {
           .get(
             projectId as number,
             opts.agent ?? null,
-            opts.roadmapItem ?? null,
+            roadmapItemId,
             triggers.join(","),
             JSON.stringify(steps),
             opts.preAuthorized ? "pre-authorized" : null,
             `+${Math.round(opts.expiresIn * 3600)} seconds`,
           ) as unknown as WatchRow;
-        printJson(presentWatch(row));
+        printJson(presentWatch(row, db));
       },
     );
 
@@ -139,7 +139,7 @@ export function registerWatchCommands(program: Command): void {
       sql += " ORDER BY id";
       const rows = db.prepare(sql).all(...params) as unknown as WatchRow[];
       if (opts.json) {
-        printJson(rows.map(presentWatch));
+        printJson(rows.map((w) => presentWatch(w, db)));
         return;
       }
       printTable(
@@ -147,7 +147,7 @@ export function registerWatchCommands(program: Command): void {
           id: w.id,
           status: w.status,
           agent: w.agent_id ?? "",
-          item: w.roadmap_item_id ?? "",
+          item: keyForItemId(w.roadmap_item_id, db) ?? "",
           step: `${w.step_index + 1}/${parseSteps(w).length}`,
           wake: w.pending_wake ? `pending(${w.wake_reason ?? "?"})` : w.wake_sent_at ? "sent" : "",
           expires_at: w.expires_at,
@@ -161,14 +161,14 @@ export function registerWatchCommands(program: Command): void {
     .action((id: string) => {
       const db = getDb();
       expireDueWatches(db);
-      printJson(presentWatch(getWatchById(Number(id))));
+      printJson(presentWatch(getWatchById(Number(id)), db));
     });
 
   watch
     .command("cancel <id>")
     .description("cancel an open watch; it never wakes the clerk again")
     .action((id: string) => {
-      printJson(presentWatch(finish(Number(id), "cancelled")));
+      printJson(presentWatch(finish(Number(id), "cancelled"), getDb()));
     });
 
   watch
@@ -178,7 +178,7 @@ export function registerWatchCommands(program: Command): void {
         "is pending (the last step of a chain, or a single watch)",
     )
     .action((id: string) => {
-      printJson(presentWatch(finish(Number(id), "fired")));
+      printJson(presentWatch(finish(Number(id), "fired"), getDb()));
     });
 
   watch
@@ -189,8 +189,8 @@ export function registerWatchCommands(program: Command): void {
         "the last step (use 'watch fire').",
     )
     .option("--agent <id>", "the agent now running this step", parseIntOpt)
-    .option("--roadmap-item <id>", "the roadmap item for this step", parseIntOpt)
-    .action((id: string, opts: { agent?: number; roadmapItem?: number }) => {
+    .option("--roadmap-item <key>", "the roadmap item key for this step")
+    .action((id: string, opts: { agent?: number; roadmapItem?: string }) => {
       if (opts.agent === undefined && opts.roadmapItem === undefined) {
         throw new Error(
           "give --agent and/or --roadmap-item for the next step (otherwise the " +
@@ -205,6 +205,7 @@ export function registerWatchCommands(program: Command): void {
             `use 'ledger watch fire ${w.id}'`,
         );
       }
+      const itemId = opts.roadmapItem !== undefined ? resolveRoadmapRef(opts.roadmapItem, db).id : null;
       const agentId = opts.agent ?? null;
       if (agentId !== null) getAgentById(agentId);
       const row = db
@@ -218,8 +219,8 @@ export function registerWatchCommands(program: Command): void {
                updated_at = datetime('now')
            WHERE id = ? RETURNING *`,
         )
-        .get(agentId, opts.roadmapItem ?? null, w.id) as unknown as WatchRow;
-      printJson(presentWatch(row));
+        .get(agentId, itemId, w.id) as unknown as WatchRow;
+      printJson(presentWatch(row, db));
     });
 
   watch
@@ -240,7 +241,7 @@ export function registerWatchCommands(program: Command): void {
            WHERE id = ? RETURNING *`,
         )
         .get(w.id) as unknown as WatchRow;
-      printJson(presentWatch(row));
+      printJson(presentWatch(row, getDb()));
     });
 }
 

@@ -8,6 +8,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { AgentRow, FirstClerkRow, WatchRow, WatchTrigger } from "../db/types.js";
 import { WATCH_TRIGGERS } from "../db/types.js";
 import * as herdr from "./herdr.js";
+import { keyForItemId } from "./roadmap-keys.js";
 
 /** Tries for a transient `agent_pane_busy` before giving up to a pending wake. */
 const WAKE_BUSY_RETRIES = 3;
@@ -23,12 +24,22 @@ export function currentStep(watch: WatchRow): string {
   return parseSteps(watch)[watch.step_index] ?? "";
 }
 
-/** A watch row plus its decoded step list, for CLI/JSON output. */
-export function presentWatch(watch: WatchRow): WatchRow & {
+export type PresentedWatch = Omit<WatchRow, "roadmap_item_id"> & {
+  /** Roadmap item key (e.g. LEDGER-12); the internal numeric id is withheld (roadmap #80). */
+  roadmap_item: string | null;
   steps_list: string[];
   next_step: string;
-} {
-  return { ...watch, steps_list: parseSteps(watch), next_step: currentStep(watch) };
+};
+
+/** User-facing watch: item key instead of the global numeric id, plus decoded steps. */
+export function presentWatch(watch: WatchRow, db: DatabaseSync): PresentedWatch {
+  const { roadmap_item_id, ...rest } = watch;
+  return {
+    ...rest,
+    roadmap_item: keyForItemId(roadmap_item_id, db),
+    steps_list: parseSteps(watch),
+    next_step: currentStep(watch),
+  };
 }
 
 export function parseTriggers(text: string): WatchTrigger[] {
@@ -121,7 +132,7 @@ function clip(text: string, max: number): string {
 }
 
 /** One short line per watch; several are joined into a single prompt. */
-export function wakeMessage(watches: WatchRow[]): string {
+export function wakeMessage(watches: WatchRow[], db: DatabaseSync): string {
   const parts = watches.map((w) => {
     const steps = parseSteps(w);
     const policy =
@@ -129,8 +140,10 @@ export function wakeMessage(watches: WatchRow[]): string {
         ? ""
         : ` Step ${w.wake_state}: do NOT proceed mechanically; read it and escalate or decide.`;
     const auth = w.authorization_basis ? " [series pre-authorized by the human]" : "";
+    const itemKey = keyForItemId(w.roadmap_item_id, db);
+    const item = itemKey ? ` (${itemKey})` : "";
     return (
-      `watch #${w.id}: agent #${w.wake_agent_id} is ${w.wake_state}` +
+      `watch #${w.id}${item}: agent #${w.wake_agent_id} is ${w.wake_state}` +
       ` (outcome: ${clip(w.wake_outcome ?? "none reported", MESSAGE_FIELD_MAX)}).` +
       ` Step ${w.step_index + 1}/${steps.length}: ${clip(steps[w.step_index] ?? "", MESSAGE_FIELD_MAX)}${auth}.${policy}` +
       ` Run: ledger watch get ${w.id}`

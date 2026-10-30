@@ -118,7 +118,7 @@ function wakeClerkForWatches(agentId: number): void {
   const claimed = claimMatchingWatches(db, agent, state);
   if (claimed.length === 0) return;
 
-  recordDelivery(db, claimed, deliverWake(loadClerk(), wakeMessage(claimed)));
+  recordDelivery(db, claimed, deliverWake(loadClerk(), wakeMessage(claimed, db)));
 }
 
 function flushPendingWakesIfClerkSettled(event: PaneAgentStatusChangedData): void {
@@ -129,7 +129,7 @@ function flushPendingWakesIfClerkSettled(event: PaneAgentStatusChangedData): voi
   const db = getDb();
   const pending = flushablePendingWakes(db);
   if (pending.length === 0) return;
-  recordDelivery(db, pending, deliverWake(clerk, wakeMessage(pending)));
+  recordDelivery(db, pending, deliverWake(clerk, wakeMessage(pending, db)));
 }
 
 try {

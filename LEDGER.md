@@ -572,13 +572,13 @@ pre-authorized` (C6); otherwise each dispatch still needs its own
 `user-explicit` green light.
 
 ```sh
-ledger watch add (--agent <id> | --roadmap-item <id>) \
+ledger watch add (--agent <id> | --roadmap-item <key>) \
   --next "<exact instruction for the step after this one finishes>" \
   [--next "<instruction after the following one>" ...] \
   [--on done,blocked,failed] [--expires-in <hours, default 24>] [--pre-authorized]
 ledger watch list [--status open|fired|expired|cancelled] [--all] [--project <name>] [--json]
 ledger watch get <id>
-ledger watch advance <id> --agent <id> [--roadmap-item <id>]   # chain: next step, retarget
+ledger watch advance <id> --agent <id> [--roadmap-item <key>]   # chain: next step, retarget
 ledger watch rearm <id>      # same step/agent, clear wake state (e.g. after unblocking)
 ledger watch fire <id>       # handled; nothing further pending
 ledger watch cancel <id>
@@ -589,7 +589,12 @@ that is already `done`/`blocked` may never produce another event). Repeated
 `--next` makes an ordered chain: step *i* is the instruction for the *i*-th
 completion, and the chain's length is the cap on wakes (there is no other
 wake cap). `--agent` and `--roadmap-item` may be combined; a watch on only a
-roadmap item matches any agent dispatched for that item. `blocked` and
+roadmap item matches any agent dispatched for that item. Roadmap items are
+given by key (`LEDGER-12`, case-insensitive) like everywhere else; the
+deprecated bare-numeric alias works with the usual stderr notice. Watch
+output, wake messages and catchup show the key (`roadmap_item`), never the
+internal numeric id; the watch stores the internal id, so a later project
+code change doesn't break it. `blocked` and
 failed outcomes wake you regardless of `--on`. A "failed" outcome is a `done`
 agent whose reported outcome reads like a failure (heuristic; false
 positives only cost a careful read). Watches stop waking after expiry
@@ -726,7 +731,7 @@ is a summary, not a copy to keep in sync by hand):
 - `watches` — follow-through intent (roadmap #89): `agent_id` and/or
   `roadmap_item_id`, `on_states`, JSON `steps` + `step_index`, `status`
   `open|fired|expired|cancelled`, `pending_wake`/`wake_*` bookkeeping,
-  `expires_at` (default 24h). See migration `0006_watches.ts`.
+  `expires_at` (default 24h). See migration `0007_watches.ts`; `roadmap_item_id` is the internal numeric reference (stable across key/code changes), shown to users only as the item key.
 - `events` — append-only, `agent_id` + `event_type` + free-form JSON
   `payload`.
 - `first_clerk` — single row (`id = 1`), current authority + `last_seen`

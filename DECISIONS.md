@@ -1492,7 +1492,7 @@ to check whether an agent finished. Nothing woke the clerk (an LLM session)
 when an agent's state changed, and the clerk's memory of what comes next does
 not survive compaction.
 
-**Decision.** (1) A `watches` table (migration 0006) is the source of truth
+**Decision.** (1) A `watches` table (migration 0007, after item 80's 0006) is the source of truth
 for follow-through: agent and/or roadmap item, trigger states, an ordered
 step list (a chain's length is the cap on wakes), `created_at`, expiry
 (default 24h), status `open|fired|expired|cancelled`, and a pending-wake
@@ -1539,12 +1539,17 @@ pre-authorized chain; not done in this item.
 the next catchup; pushing notifications would add a second, noisier channel
 and the human already interacts through the clerk. Out of scope by design.
 
-**Testing.** No test suite exists in this project. Verified manually against
-a throwaway `LEDGER_HOME` with a stub `herdr` binary on `PATH` (the real
-`~/.ledger` database and the real clerk pane were never touched): wake with
-no clerk pane -> pending; clerk working -> pending; clerk bare shell -> no
-prompt, pending; clerk `agent_pane_busy` -> 3 tries then pending; clerk idle
-Claude -> exactly one prompt, no re-wake on repeat events; deferred wake
-flushed when the clerk pane settles; chain `advance`/last-step refusal;
-`failed`-outcome wake; roadmap-item watches; expiry reported once in
-catchup; claim note shown once.
+**Roadmap keys (item 80).** A watch stores the internal `roadmap_item_id`
+(stable if a project code later changes); `--roadmap-item` takes a key via
+`resolveRoadmapRef`, and watch output, `catchup` and wake messages show the key
+(`roadmap_item`) and withhold the numeric id, like agents/roadmap rows.
+
+**Testing.** Automated, in the repo's `node --test` harness
+(`src/db/migrations/0007_watches.test.ts`, `src/cli/watch.test.ts`; the latter
+spawns the real CLI and watcher against a throwaway `LEDGER_HOME` with a stub
+`herdr` on `PATH`, never the real `~/.ledger` or clerk pane): upgrade from
+v6/rollback, lifecycle and expiry, idle-Claude clerk gets exactly one prompt,
+`agent_pane_busy` -> 3 tries then pending, bare shell / missing pane / no
+claim -> pending and nothing sent, no re-wake, flush when the clerk settles,
+chain bounds, failed-outcome label, catchup text and `--json`, one-time claim
+note.
