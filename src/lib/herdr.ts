@@ -112,6 +112,8 @@ export interface HerdrPaneInfo {
   // "unknown", not one of ledger's own four statuses — same widening
   // watcher.ts already applies to this same field (PaneAgentStatusChangedData).
   agent_status: HerdrAgentStatus | "unknown";
+  /** Detected agent kind on the pane (e.g. "claude"); absent/null for a plain shell. */
+  agent?: string | null;
   cwd: string | null;
 }
 

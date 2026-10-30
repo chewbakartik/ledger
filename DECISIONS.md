@@ -1484,3 +1484,67 @@ global sequences and still printed (agent ids are used in the agent prompts
 and `agent update 71`); this item covers roadmap items only. Consumers in
 other repos (ledger-notify, ledger-dashboard, the clerk skill) are
 inventoried in the PR, not edited.
+
+## Clerk follow-through: DB-stored `watches` + watcher wakes the clerk — 2026-10-30, user-directed (item 89)
+
+**Problem.** For a series of tasks the human had to keep prompting the clerk
+to check whether an agent finished. Nothing woke the clerk (an LLM session)
+when an agent's state changed, and the clerk's memory of what comes next does
+not survive compaction.
+
+**Decision.** (1) A `watches` table (migration 0006) is the source of truth
+for follow-through: agent and/or roadmap item, trigger states, an ordered
+step list (a chain's length is the cap on wakes), `created_at`, expiry
+(default 24h), status `open|fired|expired|cancelled`, and a pending-wake
+marker. CLI: `ledger watch add|list|get|advance|rearm|fire|cancel`.
+(2) The existing watcher hook, per pane event, matches open watches and wakes
+the clerk pane via `herdr agent prompt` — only if `first_clerk.herdr_pane` is
+alive, detected as a Claude agent, and idle/done. A transient
+`agent_pane_busy` is retried briefly; if the clerk is gone, a bare shell, or
+mid-turn, the wake is recorded as pending (nothing is ever typed into a bare
+shell) and surfaced by `ledger catchup` (`--json`: `watches.*`), together with
+open watches and watches that expired since the last catchup. (Addition: a
+pending wake deferred only because the clerk was busy is retried when the
+clerk's pane next settles to idle, unless a catchup already showed it — still
+event-driven, and it is what keeps a busy-clerk wake from being lost.)
+(3) The clerk, not the watcher, decides and dispatches the next step.
+`blocked` and failed outcomes always wake the clerk and never proceed
+mechanically. (4) Guards: a watch never creates watches; a wake never merges
+(C2 / per-PR authorization unchanged); chains are recorded as
+`pre-authorized` only if the human approved the series up front (C6); expired
+watches stop waking. (5) The first `clerk claim` per ledger home prints a
+one-time note about monitoring; `LEDGER.md` tells the clerk to ask about
+monitoring only when decomposing a task into chunks.
+
+**Why DB-stored intent.** The clerk's context is lossy (compaction, new
+sessions); the database already is the durable state, and `catchup` already
+is the re-orientation step, so "what happens next" belongs there, not in a
+prompt the clerk must remember.
+
+**Why no daemon.** Ledger has no standing process by design (token cost; the
+watcher is a hook that runs once per event and exits). Firstmate-style
+always-on supervision burns tokens while nothing is happening. Event-driven
+hooks cost nothing between events, and a missed wake degrades to a pending
+row that `catchup` shows.
+
+**Why wake-the-clerk over watcher-dispatch.** Reading an outcome (is the PR
+sound? did it fail quietly?) and choosing the next step is a judgement the
+gates assume an LLM-with-the-human-in-the-loop makes (C7 observation, C6
+authorization, C2 merge). A watcher that dispatched mechanically would
+bypass those, and a failed step would march on. **Deferred:** a possible later
+optimisation where the watcher itself dispatches the next step of a plain,
+pre-authorized chain; not done in this item.
+
+**Why no human notification.** Pending wakes wait in the DB and appear at
+the next catchup; pushing notifications would add a second, noisier channel
+and the human already interacts through the clerk. Out of scope by design.
+
+**Testing.** No test suite exists in this project. Verified manually against
+a throwaway `LEDGER_HOME` with a stub `herdr` binary on `PATH` (the real
+`~/.ledger` database and the real clerk pane were never touched): wake with
+no clerk pane -> pending; clerk working -> pending; clerk bare shell -> no
+prompt, pending; clerk `agent_pane_busy` -> 3 tries then pending; clerk idle
+Claude -> exactly one prompt, no re-wake on repeat events; deferred wake
+flushed when the clerk pane settles; chain `advance`/last-step refusal;
+`failed`-outcome wake; roadmap-item watches; expiry reported once in
+catchup; claim note shown once.

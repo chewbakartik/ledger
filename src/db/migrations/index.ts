@@ -4,6 +4,7 @@ import { migration0003AgentAuthorizationBasis } from "./0003_agent_authorization
 import { migration0004RoadmapPriority } from "./0004_roadmap_priority.js";
 import { migration0005RoadmapStatusStates } from "./0005_roadmap_status_states.js";
 import { migration0006RoadmapItemKeys } from "./0006_roadmap_item_keys.js";
+import { migration0007Watches } from "./0007_watches.js";
 import type { Migration } from "./types.js";
 
 export const migrations: Migration[] = [
@@ -13,4 +14,5 @@ export const migrations: Migration[] = [
   migration0004RoadmapPriority,
   migration0005RoadmapStatusStates,
   migration0006RoadmapItemKeys,
+  migration0007Watches,
 ].sort((a, b) => a.version - b.version);

@@ -188,6 +188,16 @@ silently excluded, not reported as an error, per C7. `--json`'s
 case. Governed by the same `--idle-pane-lines` flag as idle tails — `0`
 disables both.
 
+`catchup` also lists the follow-through **watches** (roadmap #89; see
+"Follow-through watches" below): open watches, **pending wakes** (a watched
+agent finished but the clerk pane couldn't be woken — each shows the agent's
+state/outcome and why it was undelivered), and watches that expired since the
+last catchup (reported once). `--json` carries them under
+`watches.open`, `watches.pending_wakes` and `watches.expired_since_last_catchup`
+(each entry includes `steps_list` and the current `next_step`). Reading a
+pending wake here marks it seen. After compaction or in a fresh clerk
+session, this is how you re-learn what is supposed to happen next.
+
 `catchup` also checks (item 42) whether a newer `@devwithdavid/ledger` npm
 version exists — a plain-text notice after the normal output in
 human-readable mode, or the top-level `update_available` JSON key
@@ -211,6 +221,11 @@ dispatching anything.
 `claim` runs the same cached update-availability check as `catchup` (item
 42); since `claim` has no `--json` mode, a matching newer version prints
 as a plain-text line after the claim's JSON output.
+
+The first successful `claim` against a ledger home also prints a one-time
+note telling the human they can ask you to add follow-through monitoring for
+any series of tasks (see "Follow-through watches"). Pass it on; it is shown
+once (marker: `$LEDGER_HOME/watch-note-shown`).
 
 ### Updating ledger
 
@@ -537,6 +552,76 @@ run looks different from ordinary quiet-between-turns output; judge which
 one you're looking at, same as you would from reading the pane directly,
 just without the extra step of going to find the pane first.
 
+## Follow-through watches (roadmap #89)
+
+A **watch** is next-step intent stored in the database, because your own
+memory of "what happens after this agent finishes" does not survive
+compaction. When a watched agent reaches `done`, `blocked`, or a failed
+outcome, the herdr watcher plugin (event-driven; no daemon, no polling)
+wakes your pane with a short message. **You** read the outcome and decide;
+the watcher never dispatches an agent and never merges anything.
+
+**Asking the human.** Only when you are decomposing a task into chunks, ask
+once: *"If we break this into chunks, would you like me to add monitoring so
+the next steps are dispatched automatically? That keeps things moving
+without prompting from you, but uses more tokens."* Otherwise never ask. Do
+not create watches unless the human said yes (or asked for monitoring
+themselves). If they approved the whole series up front, add
+`--pre-authorized` and later dispatches may use `--authorization
+pre-authorized` (C6); otherwise each dispatch still needs its own
+`user-explicit` green light.
+
+```sh
+ledger watch add (--agent <id> | --roadmap-item <id>) \
+  --next "<exact instruction for the step after this one finishes>" \
+  [--next "<instruction after the following one>" ...] \
+  [--on done,blocked,failed] [--expires-in <hours, default 24>] [--pre-authorized]
+ledger watch list [--status open|fired|expired|cancelled] [--all] [--project <name>] [--json]
+ledger watch get <id>
+ledger watch advance <id> --agent <id> [--roadmap-item <id>]   # chain: next step, retarget
+ledger watch rearm <id>      # same step/agent, clear wake state (e.g. after unblocking)
+ledger watch fire <id>       # handled; nothing further pending
+ledger watch cancel <id>
+```
+
+Create the watch right after dispatching the agent it watches (an agent
+that is already `done`/`blocked` may never produce another event). Repeated
+`--next` makes an ordered chain: step *i* is the instruction for the *i*-th
+completion, and the chain's length is the cap on wakes (there is no other
+wake cap). `--agent` and `--roadmap-item` may be combined; a watch on only a
+roadmap item matches any agent dispatched for that item. `blocked` and
+failed outcomes wake you regardless of `--on`. A "failed" outcome is a `done`
+agent whose reported outcome reads like a failure (heuristic; false
+positives only cost a careful read). Watches stop waking after expiry
+(default 24h), and a watch never creates another watch.
+
+**When woken** (the prompt looks like `[ledger wake] watch #N: agent #A is
+done (outcome: ...). Step i/n: ... Run: ledger watch get N`):
+
+1. `ledger watch get N` — read the step list and current `next_step`.
+2. Check the agent's actual outcome (`ledger agent get A`, the PR, C7 —
+   observe, don't trust the summary line).
+3. `done` and the outcome is sound: carry out the step (dispatch the next
+   agent with the right `--authorization`), then `ledger watch advance N
+   --agent <new id>`; on the last step, `ledger watch fire N`.
+4. `blocked` or failed: never proceed mechanically — handle it per
+   "Monitoring and escalating", escalating to the human if it needs their
+   judgment. `watch rearm N` if the agent will continue, or `watch cancel N`.
+5. A woken step is still bound by every gate: a wake never authorises a
+   merge (C2 and per-PR merge authorization are unchanged).
+
+**Delivery.** The wake is sent only if your pane (`first_clerk.herdr_pane`)
+is alive, is a Claude agent, and is idle/done; otherwise (pane gone, bare
+shell, or you are mid-turn) it is recorded as a pending wake and surfaces in
+the next `ledger catchup`. A wake that was deferred because you were
+mid-turn is retried once when your pane next settles to idle, unless a
+catchup already showed it to you. The human is never notified.
+
+Optional convenience, not the source of truth: you may run `herdr agent
+wait <pane> --until done,blocked --timeout <ms>` as a **background** job
+(never foreground — it blocks that shell call). The watch in the database is
+what survives compaction.
+
 ## Safe ways to extend this
 
 Per `DESIGN.md`'s core philosophy: before adding anything, ask *"could this
@@ -638,6 +723,10 @@ is a summary, not a copy to keep in sync by hand):
   `coding_agent`, `authorization_basis` enum `user-explicit|pre-authorized`
   (NULL for rows predating the C6 gate), `status` enum
   `blocked|working|done|idle`, `outcome`, `spawned_by` self-reference).
+- `watches` — follow-through intent (roadmap #89): `agent_id` and/or
+  `roadmap_item_id`, `on_states`, JSON `steps` + `step_index`, `status`
+  `open|fired|expired|cancelled`, `pending_wake`/`wake_*` bookkeeping,
+  `expires_at` (default 24h). See migration `0006_watches.ts`.
 - `events` — append-only, `agent_id` + `event_type` + free-form JSON
   `payload`.
 - `first_clerk` — single row (`id = 1`), current authority + `last_seen`

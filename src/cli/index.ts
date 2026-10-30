@@ -12,6 +12,7 @@ import { registerInitCommand } from "./commands/init.js";
 import { registerProjectCommands } from "./commands/projects.js";
 import { registerRoadmapCommands } from "./commands/roadmap.js";
 import { registerUpdateCommand } from "./commands/update.js";
+import { registerWatchCommands } from "./commands/watch.js";
 import { touchClerkHeartbeat } from "../db/client.js";
 import { packageVersion } from "../lib/package-info.js";
 
@@ -34,6 +35,7 @@ registerDocsCommand(program);
 registerDbCommands(program);
 registerInitCommand(program);
 registerUpdateCommand(program);
+registerWatchCommands(program);
 
 program.exitOverride();
 
