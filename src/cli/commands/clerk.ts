@@ -1,8 +1,10 @@
 import { Command } from "commander";
-import { getDb, suppressNextClerkHeartbeat } from "../../db/client.js";
+import { getDb, ledgerHome, suppressNextClerkHeartbeat } from "../../db/client.js";
 import type { FirstClerkRow } from "../../db/types.js";
 import * as herdr from "../../lib/herdr.js";
 import { packageVersion } from "../../lib/package-info.js";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { checkForUpdate, formatUpdateNotice } from "../../lib/update-check.js";
 import { printJson } from "../format.js";
 
@@ -56,6 +58,8 @@ export function registerClerkCommands(program: Command): void {
       renameClaimantWorkspace(opts.herdrPane);
 
       printJson(row);
+
+      printFollowThroughNoteOnce();
 
       // Item 42: cached (6h), silent-on-failure update-availability notice.
       // `claim` has no --json mode, so a plain-text line after the JSON
@@ -132,5 +136,30 @@ function renameClaimantWorkspace(herdrPane: string): void {
       `Warning: clerk claim succeeded, but renaming workspace ` +
         `"${workspaceId}" to "${CLERK_WORKSPACE_LABEL}" failed: ${msg}`,
     );
+  }
+}
+
+const FOLLOW_THROUGH_NOTE_MARKER = "watch-note-shown";
+
+/**
+ * Roadmap #89 decision 7a: tell the human, once per ledger home, that they
+ * can ask the clerk to add follow-through monitoring (`ledger watch`) for
+ * any series of tasks. The marker file keeps it to a single appearance
+ * rather than every claim; a failure to write it just means it may show
+ * again.
+ */
+function printFollowThroughNoteOnce(): void {
+  const marker = join(ledgerHome(), FOLLOW_THROUGH_NOTE_MARKER);
+  if (existsSync(marker)) return;
+  console.log(
+    "\nNote: you can ask the clerk at any time to add follow-through monitoring " +
+      "for a series of tasks (ledger watch) -- when an agent finishes, the clerk " +
+      "is woken to dispatch the next step without you prompting it. It uses " +
+      "more tokens, so it is only added when you ask.",
+  );
+  try {
+    writeFileSync(marker, `${new Date().toISOString()}\n`);
+  } catch {
+    // cosmetic only
   }
 }

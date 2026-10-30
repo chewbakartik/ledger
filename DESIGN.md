@@ -227,6 +227,10 @@ CREATE TABLE events (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Added later (roadmap #89, migration 0007): watches -- follow-through intent
+-- (agent/roadmap item, trigger states, ordered steps, expiry, pending-wake
+-- marker). Full DDL in src/db/migrations/0007_watches.ts.
+
 CREATE TABLE first_clerk (
   id            INTEGER PRIMARY KEY CHECK (id = 1), -- single row
   session_id    TEXT NOT NULL,
@@ -269,6 +273,15 @@ standing process — it's a small script that:
 No independent uptime story, no polling interval to tune. If herdr isn't
 running, this plugin simply never fires — which is the correct behavior,
 since no agents can be running either.
+
+**Follow-through (roadmap #89).** The same one-shot hook also checks open
+rows in the `watches` table (DB-stored next-step intent; see `LEDGER.md`,
+"Follow-through watches"). When the event leaves a watched agent `done`,
+`blocked`, or done-with-a-failed-outcome, it wakes the clerk's pane with a
+short `herdr agent prompt` — only if that pane is a live, idle Claude agent;
+otherwise it records a pending wake that the next `ledger catchup` surfaces.
+It still has no standing process, never dispatches an agent, never merges,
+never creates a watch, and never notifies the human. See `DECISIONS.md`.
 
 ## Dispatch flow
 

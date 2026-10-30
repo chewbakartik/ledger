@@ -177,3 +177,40 @@ export interface FirstClerkRow {
   claimed_at: string;
   last_seen: string | null;
 }
+
+// Roadmap #89: a watch is DB-stored next-step intent for a series of tasks.
+export type WatchStatus = "open" | "fired" | "expired" | "cancelled";
+
+export const WATCH_STATUSES: WatchStatus[] = ["open", "fired", "expired", "cancelled"];
+
+/** Wake triggers. 'failed' = an agent that reported done with a failure-looking outcome. */
+export type WatchTrigger = "done" | "blocked" | "failed";
+
+export const WATCH_TRIGGERS: WatchTrigger[] = ["done", "blocked", "failed"];
+
+export interface WatchRow {
+  id: number;
+  project_id: number;
+  agent_id: number | null;
+  roadmap_item_id: number | null;
+  on_states: string;
+  /** JSON array of step instructions. */
+  steps: string;
+  step_index: number;
+  authorization_basis: "pre-authorized" | null;
+  status: WatchStatus;
+  pending_wake: 0 | 1;
+  wake_agent_id: number | null;
+  wake_state: WatchTrigger | null;
+  wake_outcome: string | null;
+  wake_reason: string | null;
+  wake_at: string | null;
+  wake_sent_at: string | null;
+  wake_count: number;
+  pending_surfaced_at: string | null;
+  expiry_surfaced_at: string | null;
+  created_at: string;
+  expires_at: string;
+  fired_at: string | null;
+  updated_at: string;
+}

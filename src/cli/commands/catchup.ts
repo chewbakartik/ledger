@@ -1,12 +1,13 @@
 import { Command } from "commander";
-import type { SQLInputValue } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { getDb } from "../../db/client.js";
-import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow } from "../../db/types.js";
+import type { AgentRow, EventRow, FirstClerkRow, RoadmapRow, WatchRow } from "../../db/types.js";
 import { ROADMAP_TERMINAL_STATUSES } from "../../db/types.js";
 import { getPane, HerdrError, readPane } from "../../lib/herdr.js";
-import { presentAgent, presentRoadmap, provisionalCodesNotice, provisionalProjects } from "../../lib/roadmap-keys.js";
+import { keyForItemId, presentAgent, presentRoadmap, provisionalCodesNotice, provisionalProjects } from "../../lib/roadmap-keys.js";
 import { packageVersion } from "../../lib/package-info.js";
 import { checkForUpdate, formatUpdateNotice, type UpdateInfo } from "../../lib/update-check.js";
+import { expireDueWatches, parseSteps, presentWatch } from "../../lib/watches.js";
 import { printJson } from "../format.js";
 import { getProjectByName } from "./projects.js";
 
@@ -121,6 +122,21 @@ function shortLabel(taskDescription: string): string {
     : firstLine;
 }
 
+function describeWatch(w: WatchRow, db: DatabaseSync): string {
+  const steps = parseSteps(w);
+  const target = [
+    w.agent_id !== null ? `agent#${w.agent_id}` : null,
+    w.roadmap_item_id !== null ? (keyForItemId(w.roadmap_item_id, db) ?? "item") : null,
+  ]
+    .filter(Boolean)
+    .join("+");
+  const sent = w.wake_sent_at ? " [woken, awaiting clerk]" : "";
+  return (
+    `watch #${w.id} on ${target} step ${w.step_index + 1}/${steps.length}${sent}: ` +
+    `${shortLabel(steps[w.step_index] ?? "")} (expires ${w.expires_at})`
+  );
+}
+
 function parseIdlePaneLinesOpt(value: string): number {
   const n = Number.parseInt(value, 10);
   if (Number.isNaN(n) || n < 0) {
@@ -231,6 +247,37 @@ export function registerCatchupCommand(program: Command): void {
         " ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, id";
       const roadmap = db.prepare(roadmapSql).all(...roadmapParams) as unknown as RoadmapRow[];
 
+      // Roadmap #89: what happens next lives in the DB. Open watches,
+      // pending (undelivered) wakes, and watches that expired since the last
+      // catchup -- so a post-compaction or fresh clerk re-learns it here.
+      expireDueWatches(db);
+      const watchScope = project ? " AND project_id = ?" : "";
+      const watchParams: SQLInputValue[] = project ? [project.id] : [];
+      const openWatches = db
+        .prepare(
+          `SELECT * FROM watches WHERE status = 'open' AND pending_wake = 0${watchScope} ORDER BY id`,
+        )
+        .all(...watchParams) as unknown as WatchRow[];
+      const pendingWakes = db
+        .prepare(
+          `SELECT * FROM watches WHERE status = 'open' AND pending_wake = 1${watchScope} ORDER BY id`,
+        )
+        .all(...watchParams) as unknown as WatchRow[];
+      const expiredWatches = db
+        .prepare(
+          `SELECT * FROM watches WHERE status = 'expired' AND expiry_surfaced_at IS NULL${watchScope} ORDER BY id`,
+        )
+        .all(...watchParams) as unknown as WatchRow[];
+      // Surfacing marks them seen: a pending wake the clerk has now read is
+      // not re-prompted when the clerk pane next settles, and an expiry is
+      // reported once.
+      for (const w of pendingWakes) {
+        db.prepare("UPDATE watches SET pending_surfaced_at = datetime('now') WHERE id = ?").run(w.id);
+      }
+      for (const w of expiredWatches) {
+        db.prepare("UPDATE watches SET expiry_surfaced_at = datetime('now') WHERE id = ?").run(w.id);
+      }
+
       if (firstClerk) {
         db.prepare(
           "UPDATE first_clerk SET last_seen = datetime('now') WHERE id = 1",
@@ -254,6 +301,11 @@ export function registerCatchupCommand(program: Command): void {
         done_pane_read_note: donePaneGlobalNote,
         events,
         roadmap: roadmap.map((r) => presentRoadmap(r, db)),
+        watches: {
+          open: openWatches.map((w) => presentWatch(w, db)),
+          pending_wakes: pendingWakes.map((w) => presentWatch(w, db)),
+          expired_since_last_catchup: expiredWatches.map((w) => presentWatch(w, db)),
+        },
         update_available: updateAvailable,
         provisional_project_codes: provisionalProjects(db),
       };
@@ -312,6 +364,19 @@ export function registerCatchupCommand(program: Command): void {
         const indent = r.parent_key ? "    " : "  ";
         console.log(`${indent}${r.key} [${projectLabel(r.project_id)}] [${r.status}] ${r.title}`);
       }
+
+      console.log(`\nWatches open (${openWatches.length}):`);
+      for (const w of openWatches) console.log(`  ${describeWatch(w, db)}`);
+      console.log(`\nPending wakes (${pendingWakes.length}) -- the clerk pane couldn't take these:`);
+      for (const w of pendingWakes) {
+        console.log(`  ${describeWatch(w, db)}`);
+        console.log(
+          `      agent #${w.wake_agent_id} is ${w.wake_state} (outcome: ${w.wake_outcome ?? "none reported"}); ` +
+            `undelivered because ${w.wake_reason ?? "unknown"}`,
+        );
+      }
+      console.log(`\nWatches expired since last catchup (${expiredWatches.length}):`);
+      for (const w of expiredWatches) console.log(`  ${describeWatch(w, db)} (expired ${w.expires_at})`);
 
       if (updateAvailable) console.log(`\n${formatUpdateNotice(updateAvailable)}`);
       const codesNotice = provisionalCodesNotice(db);

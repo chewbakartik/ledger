@@ -128,7 +128,7 @@ test("a failed backfill verification rolls the whole migration back", () => {
 test("rollback to v5 restores the old shape with all data and relationships intact; re-upgrade works", () => {
   const db = v5Store();
   const before = snapshot(db);
-  applyMigrations(db);
+  applyMigrations(db, { target: 6 });
   db.prepare("INSERT INTO roadmap (project_id, title) VALUES (1, 'post-migration item')").run();
 
   assert.deepEqual(rollbackTo(db, 5), [6]);
@@ -149,7 +149,7 @@ test("rollback to v5 restores the old shape with all data and relationships inta
 
 test("rollback refuses a migration without a down, before changing anything", () => {
   const db = v5Store();
-  applyMigrations(db);
+  applyMigrations(db, { target: 6 });
   assert.throws(() => rollbackTo(db, 3), /has no rollback/);
   assert.equal((db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number }).v, 6);
 });
